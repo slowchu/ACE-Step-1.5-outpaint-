@@ -109,7 +109,7 @@ class TaskUtilsMixin:
 
         if has_codes:
             is_cover_task = True
-        can_use_repainting = is_repaint_task or is_lego_task
+        can_use_repainting = is_repaint_task
         return is_repaint_task, is_lego_task, is_cover_task, can_use_repainting
 
     def create_target_wavs(self, duration_seconds: float) -> torch.Tensor:
