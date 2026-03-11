@@ -89,21 +89,29 @@ class ConditioningTextMixin:
             actual_language = actual_languages[i]
 
             # SFT-stems lego: build the training-compatible caption block.
-            # Training format (full mode):
+            #
+            # Training format — full mode ("Generate the {TAG} track based on the audio context:"):
             #   "Global: {global_caption}\nLocal: {local_caption}\nMask Control: true"
-            # Training format (when no global):
-            #   "Local: {local_caption}\nMask Control: true"
-            # The user passes:
-            #   - captions[i]        → local/per-track description
-            #   - global_captions[i] → global/full-song description (optional)
-            if is_lego_sft and "based on the audio context" in instruction.lower():
+            #   where global_caption = full song description, local_caption = per-stem description
+            #
+            # Training format — chunk mode ("Generate a segment of the {TAG} track..."):
+            #   "Local: {local_caption}\nMask Control: true"    (no Global prefix)
+            #
+            # The caller passes:
+            #   - captions[i]        → local/per-track description  (→ Local:)
+            #   - global_captions[i] → global/full-song description (→ Global:)
+            if is_lego_sft:
                 local_cap = actual_caption
                 global_cap = (global_captions[i] if global_captions and i < len(global_captions) else "") or ""
-                if not local_cap.startswith("Local:"):
-                    if global_cap:
-                        actual_caption = f"Global: {global_cap}\nLocal: {local_cap}\nMask Control: true"
-                    else:
-                        actual_caption = f"Local: {local_cap}\nMask Control: true"
+                instr_lower = instruction.lower()
+                is_chunk_mode = "a segment" in instr_lower
+                if is_chunk_mode:
+                    # Chunk mode: Local only, no Global prefix
+                    actual_caption = f"Local: {local_cap}\nMask Control: true"
+                else:
+                    # Full mode: always include Global + Local (even when global_cap is empty,
+                    # the model was trained exclusively with this prefix in full-mode prompts)
+                    actual_caption = f"Global: {global_cap}\nLocal: {local_cap}\nMask Control: true"
 
             text_prompt = SFT_GEN_PROMPT.format(instruction, actual_caption, parsed_metas[i])
 
