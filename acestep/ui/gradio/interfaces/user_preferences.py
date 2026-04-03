@@ -14,6 +14,7 @@ hacking required.
 from __future__ import annotations
 
 import json
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -163,7 +164,9 @@ def _build_restore_js(num_outputs: int) -> str:
     }}"""
 
 
-def restore_preferences(*values: Any) -> tuple[Any, ...]:
+def restore_preferences(
+    *values: Any, _num_outputs: int = 0
+) -> tuple[Any, ...]:
     """Map JS restore results into Gradio output values.
 
     The JS function reads localStorage and produces an array:
@@ -174,8 +177,16 @@ def restore_preferences(*values: Any) -> tuple[Any, ...]:
     ``None`` (JSON ``null``) → ``gr.update()`` (no-op, preserves current).
     Booleans beyond PREF_KEYS → visibility/interactivity updates matching
     ``_update_mp3_control_visibility()`` from the output controls module.
+
+    When the JS side returns no values (e.g. certain Gradio versions do not
+    forward the JS return value to the Python ``fn`` when ``inputs=None``),
+    ``_num_outputs`` is used to produce the correct number of no-op updates
+    so Gradio does not raise a ``ValueError`` about mismatched output count.
     """
     import gradio as gr
+
+    if not values:
+        return tuple(gr.update() for _ in range(_num_outputs))
 
     n_prefs = len(PREF_KEYS)
     results: list[Any] = []
@@ -240,7 +251,7 @@ def wire_preference_restore(
             outputs.append(comp)
 
     demo.load(
-        fn=restore_preferences,
+        fn=partial(restore_preferences, _num_outputs=len(outputs)),
         inputs=None,
         outputs=outputs,
         js=_build_restore_js(num_outputs=len(outputs)),

@@ -199,6 +199,20 @@ class RestoreTests(unittest.TestCase):
         self.assertTrue(sr_update["visible"])
         self.assertTrue(sr_update["interactive"])
 
+    def test_restore_preferences_empty_values_returns_noop_updates(self):
+        """When called with no values (JS did not forward args), the function
+        should return ``_num_outputs`` gr.update() no-ops instead of crashing."""
+        result = restore_preferences(_num_outputs=_NUM_OUTPUTS)
+        self.assertEqual(len(result), _NUM_OUTPUTS)
+        for v in result:
+            self.assertIsInstance(v, dict)
+            self.assertEqual(v["__type__"], "update")
+
+    def test_restore_preferences_empty_values_no_num_outputs(self):
+        """With no values and no _num_outputs hint, return empty tuple."""
+        result = restore_preferences()
+        self.assertEqual(len(result), 0)
+
     def test_pref_keys_match_defaults(self):
         """Every PREF_KEY must have a corresponding default."""
         for key in PREF_KEYS:
