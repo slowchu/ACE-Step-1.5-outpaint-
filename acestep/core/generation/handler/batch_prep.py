@@ -3,6 +3,7 @@
 from typing import Dict, List, Optional, Union
 
 import torch
+from loguru import logger
 
 from acestep.constants import DEFAULT_DIT_INSTRUCTION
 
@@ -95,11 +96,28 @@ class BatchPrepMixin:
         lyrics_batch = [lyrics] * actual_batch_size
         vocal_languages_batch = [vocal_language] * actual_batch_size
 
+        # Metadata duration MUST reflect the TOTAL output length, not the
+        # src-audio length.  For the extend task the handler sets
+        # ``audio_duration = crop_time + extend_duration`` — if we use the
+        # src audio length here instead, the DiT text prompt encodes the
+        # wrong duration (e.g. "13 seconds" when the latent is 28.5s), which
+        # corrupts the model's internal timing/position expectations and
+        # produces gibberish beyond the kept region.
         calculated_duration = None
-        if processed_src_audio is not None:
-            calculated_duration = processed_src_audio.shape[-1] / 48000.0
-        elif audio_duration is not None and float(audio_duration) > 0:
+        if audio_duration is not None and float(audio_duration) > 0:
             calculated_duration = float(audio_duration)
+        elif processed_src_audio is not None:
+            calculated_duration = processed_src_audio.shape[-1] / 48000.0
+
+        src_len = (
+            processed_src_audio.shape[-1] / 48000.0
+            if processed_src_audio is not None else None
+        )
+        logger.info(
+            "[extend-trace][batch_prep] audio_duration(in)={} src_len={} "
+            "-> metadata duration={} (encoded into text prompt)",
+            audio_duration, src_len, calculated_duration,
+        )
 
         metadata_dict: Dict[str, Union[str, int]] = self._build_metadata_dict(
             bpm, key_scale, time_signature, calculated_duration

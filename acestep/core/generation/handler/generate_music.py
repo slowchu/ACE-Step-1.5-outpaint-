@@ -422,11 +422,26 @@ class GenerateMusicMixin:
             )
             repainting_start_batch = service_inputs.get("repainting_start_batch")
             repainting_end_batch = service_inputs.get("repainting_end_batch")
+            # Extend must always splice the kept region back from the original
+            # waveform: the whole point of the task is that [0:crop_time] is
+            # bit-identical to the source.  For repaint/lego we still honor
+            # ``repaint_mode != aggressive`` so users can opt out.
             do_wav_splice = (
-                repaint_mode != "aggressive"
-                and repainting_start_batch is not None
+                repainting_start_batch is not None
                 and repainting_end_batch is not None
+                and (task_type == "extend" or repaint_mode != "aggressive")
             )
+            if task_type == "extend":
+                logger.info(
+                    "[extend-trace][generate_music] wav_splice preflight: "
+                    "repaint_mode={} repainting_start_batch={} "
+                    "repainting_end_batch={} do_wav_splice={} "
+                    "pred_wavs.shape={} src_wavs.shape={}",
+                    repaint_mode, repainting_start_batch, repainting_end_batch,
+                    do_wav_splice,
+                    tuple(pred_wavs.shape) if pred_wavs is not None else None,
+                    tuple(service_inputs["target_wavs_tensor"].shape),
+                )
             if do_wav_splice:
                 # For extend we always want the kept region restored from the
                 # original source and a small wav-level crossfade at the seam
@@ -436,6 +451,16 @@ class GenerateMusicMixin:
                 splice_crossfade = resolved_wav_cf
                 if task_type == "extend" and splice_crossfade <= 0.0:
                     splice_crossfade = 0.02
+                if task_type == "extend":
+                    logger.info(
+                        "[extend-trace][generate_music] invoking "
+                        "apply_repaint_waveform_splice: starts={} ends={} "
+                        "crossfade={}s (kept region [0:{}s] will be sourced from "
+                        "original src_audio, seam crossfade at boundary)",
+                        repainting_start_batch, repainting_end_batch,
+                        splice_crossfade,
+                        repainting_start_batch[0] if repainting_start_batch else None,
+                    )
                 pred_wavs = apply_repaint_waveform_splice(
                     pred_wavs=pred_wavs,
                     src_wavs=service_inputs["target_wavs_tensor"],
@@ -443,6 +468,14 @@ class GenerateMusicMixin:
                     repainting_ends=repainting_end_batch,
                     sample_rate=self.sample_rate,
                     crossfade_duration=splice_crossfade,
+                )
+            elif task_type == "extend":
+                logger.warning(
+                    "[extend-trace][generate_music] wav_splice SKIPPED for extend "
+                    "(repaint_mode={}, starts={}, ends={}). Kept region will carry "
+                    "VAE reconstruction drift — this usually causes an audible "
+                    "volume/tone jump at the crop boundary.",
+                    repaint_mode, repainting_start_batch, repainting_end_batch,
                 )
             result = self._build_generate_music_success_payload(
                 outputs=outputs,
