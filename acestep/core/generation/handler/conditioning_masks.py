@@ -41,15 +41,19 @@ class ConditioningMaskMixin:
 
         Returns:
             Tuple of (chunk_masks, spans, is_covers, src_latents, repaint_mask).
-            ``repaint_mask`` is a boolean ``[B, T]`` tensor: True = generate
-            (model free), False = preserve source (step injection replaces
-            ``xt`` with the noised source latent).  Boolean is used even for
-            the extend task because the model-level step-injection (in all six
-            variants) is ``torch.where(mask, xt, zt)`` which silently coerces
-            any non-zero float to ``True`` — a soft ramp would make the kept
-            region be "generated" instead of preserved.  Seam smoothing for
-            extend is applied at the waveform level via
-            ``apply_repaint_waveform_splice`` after VAE decode.
+            ``repaint_mask`` is either a boolean ``[B, T]`` tensor (True =
+            generate, False = preserve) for repaint / lego, or, when any
+            extend item is present, a float ``[B, T]`` tensor in ``[0, 1]``
+            with a linear ramp in the preserve region just before the
+            boundary so the step-injection blend transitions smoothly between
+            the preserved source latents and the generated extension.  1.0 =
+            generate (model free), 0.0 = preserve source, fractional = blend.
+
+            The model-level step-injection in all six variants has been
+            updated to handle float masks (``m * xt + (1 - m) * zt_src``), so
+            the ramp is honored end-to-end.  A short waveform-level splice is
+            still applied after VAE decode to eliminate reconstruction drift
+            in the kept region.
         """
         if extend_specs is None:
             extend_specs = [None] * batch_size
@@ -156,17 +160,48 @@ class ConditioningMaskMixin:
 
         repaint_mask: Optional[torch.Tensor] = None
         if repainting_ranges:
-            repaint_mask = torch.ones(
-                batch_size, max_latent_length, dtype=torch.bool, device=self.device,
-            )
-            for i, (start_latent, end_latent) in repainting_ranges.items():
-                repaint_mask[i] = False
-                repaint_mask[i, start_latent:end_latent] = True
-            logger.info(
-                "[conditioning_masks] repaint_mask built: shape={} dtype={} "
-                "true_per_item={} (True=generate, False=preserve)",
-                tuple(repaint_mask.shape), repaint_mask.dtype,
-                repaint_mask.sum(dim=-1).tolist(),
-            )
+            if extend_ranges:
+                # Float mask with a linear seam ramp on the kept-side edge.
+                # Outside the repaint span: 0 (preserve source).
+                # Inside  the repaint span: 1 (model generates freely).
+                # Ramp (preserve → repaint) spans ``seam_frames`` just before
+                # ``start_latent`` and linearly rises 0 → 1 so the step
+                # injection blend transitions smoothly between the preserved
+                # source latents and the generated extension.
+                repaint_mask = torch.zeros(
+                    batch_size, max_latent_length, dtype=torch.float32, device=self.device,
+                )
+                for i, (start_latent, end_latent) in repainting_ranges.items():
+                    repaint_mask[i, start_latent:end_latent] = 1.0
+                    if i in extend_ranges:
+                        _s, _e, seam = extend_ranges[i]
+                        if seam > 0:
+                            ramp_start = max(0, _s - seam)
+                            ramp_len = _s - ramp_start
+                            if ramp_len > 0:
+                                ramp = torch.linspace(
+                                    0.0, 1.0, steps=ramp_len + 2, device=self.device,
+                                )[1:-1]
+                                repaint_mask[i, ramp_start:_s] = ramp
+                logger.info(
+                    "[conditioning_masks] repaint_mask built (extend, float): "
+                    "shape={} dtype={} "
+                    "sum_per_item={} (1.0=generate, 0.0=preserve, fractional=blend)",
+                    tuple(repaint_mask.shape), repaint_mask.dtype,
+                    [float(s) for s in repaint_mask.sum(dim=-1).tolist()],
+                )
+            else:
+                repaint_mask = torch.ones(
+                    batch_size, max_latent_length, dtype=torch.bool, device=self.device,
+                )
+                for i, (start_latent, end_latent) in repainting_ranges.items():
+                    repaint_mask[i] = False
+                    repaint_mask[i, start_latent:end_latent] = True
+                logger.info(
+                    "[conditioning_masks] repaint_mask built (bool): shape={} "
+                    "dtype={} true_per_item={} (True=generate, False=preserve)",
+                    tuple(repaint_mask.shape), repaint_mask.dtype,
+                    repaint_mask.sum(dim=-1).tolist(),
+                )
 
         return chunk_masks_tensor, spans, is_covers_tensor, src_latents, repaint_mask

@@ -1557,14 +1557,33 @@ class AceStepConditionEncoder(AceStepPreTrainedModel):
 
 
 def _repaint_step_injection(xt, clean_src, mask, t_next, noise):
-    """Replace non-repaint regions of *xt* with noised source latents."""
+    """Replace non-repaint regions of *xt* with noised source latents.
+
+    Supports both boolean and float masks.  For a float ``mask`` in
+    ``[0, 1]`` a per-frame blend ``xt_new = m * xt + (1 - m) * zt`` is
+    applied so a pre-built seam ramp (e.g. extend-task boundary) is
+    honored — a plain ``torch.where`` would silently coerce any non-zero
+    float to ``True`` and destroy the ramp.
+    """
     zt = t_next * noise + (1.0 - t_next) * clean_src
-    m = mask.unsqueeze(-1).expand_as(xt)
-    return torch.where(m, xt, zt)
+    if mask.dtype == torch.bool:
+        m = mask.unsqueeze(-1).expand_as(xt)
+        return torch.where(m, xt, zt)
+    m = mask.to(xt.dtype).unsqueeze(-1).expand_as(xt)
+    return m * xt + (1.0 - m) * zt
 
 
 def _repaint_boundary_blend(x_gen, clean_src, mask, cf_frames):
-    """Blend generated latents with source at repaint boundaries."""
+    """Blend generated latents with source at repaint boundaries.
+
+    For float masks the input is assumed to already encode the desired
+    soft boundary (e.g. extend-task seam ramp), so no additional ramp is
+    synthesized.  For boolean masks a ``cf_frames``-wide linear ramp is
+    added on each side of the repaint span.
+    """
+    if mask.dtype != torch.bool:
+        m = mask.to(x_gen.dtype).unsqueeze(-1).expand_as(x_gen)
+        return m * x_gen + (1.0 - m) * clean_src
     soft = mask.float().clone()
     if cf_frames <= 0:
         m = soft.unsqueeze(-1).expand_as(x_gen)
