@@ -22,15 +22,39 @@ class PaddingMixin:
         is_lego_task,
         is_cover_task,
         can_use_repainting,
+        is_extend_task: bool = False,
+        crop_time: float = 0.0,
+        extend_duration: float = 30.0,
     ):
-        """Prepare padded target wavs and repaint coordinates for each batch item."""
+        """Prepare padded target wavs and repaint coordinates for each batch item.
+
+        Extend task: crop ``processed_src_audio`` at ``crop_time`` seconds and
+        right-pad with zeros for ``extend_duration`` seconds.  Repaint span is
+        set to ``[crop_time, crop_time + extend_duration]`` so the downstream
+        mask/latent builders treat the tail as the generated region.
+        """
         try:
             target_wavs_batch = []
             # Store padding info for each batch item to adjust repainting coordinates
             padding_info_batch = []
             for i in range(actual_batch_size):
                 if processed_src_audio is not None:
-                    if is_cover_task:
+                    if is_extend_task:
+                        # Extend task: crop source at crop_time and right-pad
+                        # with zeros for the extension region.  The extension
+                        # region in `target_wavs` is just a placeholder; the
+                        # real random-noise seed is injected at the latent
+                        # level by the target/mask builders.
+                        src_len = processed_src_audio.shape[-1]
+                        crop_samples = int(max(0.0, float(crop_time)) * 48000)
+                        crop_samples = min(crop_samples, src_len)
+                        ext_samples = int(max(0.1, float(extend_duration)) * 48000)
+                        cropped = processed_src_audio[..., :crop_samples]
+                        batch_target_wavs = torch.nn.functional.pad(
+                            cropped, (0, ext_samples), "constant", 0
+                        )
+                        padding_info_batch.append({"left_padding_duration": 0.0, "right_padding_duration": 0.0})
+                    elif is_cover_task:
                         # Cover task: Use src_audio directly without padding
                         batch_target_wavs = processed_src_audio
                         padding_info_batch.append({"left_padding_duration": 0.0, "right_padding_duration": 0.0})

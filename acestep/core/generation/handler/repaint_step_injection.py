@@ -15,10 +15,17 @@ def apply_repaint_step_injection(
     At each diffusion step the non-repaint regions are forced back to the
     appropriately-noised version of the original audio so they cannot drift.
 
+    Supports both boolean and float masks.  For float masks in [0, 1] the
+    injection performs a per-frame blend
+    ``xt_new = m * xt + (1 - m) * zt_src`` so callers can build soft seams
+    (e.g. extend-task boundary ramps) without a separate code path.
+
     Args:
         xt: Current diffusion state [B, T, C].
         clean_src_latents: VAE-encoded source audio (unmasked) [B, T, C].
-        repaint_mask: Boolean [B, T], True = repaint (generate), False = preserve.
+        repaint_mask: Boolean or float [B, T].  Boolean: True = repaint
+            (generate), False = preserve.  Float: 1 = generate, 0 = preserve,
+            fractional = blend.
         t_next: Noise level after this step (flow-matching: 1.0=noise, 0.0=clean).
         noise: Initial noise tensor [B, T, C], reused across steps for consistency.
 
@@ -26,8 +33,11 @@ def apply_repaint_step_injection(
         Updated xt with non-repaint regions replaced by noised source.
     """
     zt_src = t_next * noise + (1.0 - t_next) * clean_src_latents
-    mask_expanded = repaint_mask.unsqueeze(-1).expand_as(xt)
-    return torch.where(mask_expanded, xt, zt_src)
+    if repaint_mask.dtype == torch.bool:
+        mask_expanded = repaint_mask.unsqueeze(-1).expand_as(xt)
+        return torch.where(mask_expanded, xt, zt_src)
+    m = repaint_mask.to(xt.dtype).unsqueeze(-1).expand_as(xt)
+    return m * xt + (1.0 - m) * zt_src
 
 
 def build_soft_repaint_mask(
@@ -39,13 +49,20 @@ def build_soft_repaint_mask(
     The crossfade zones extend into the preserved (non-repaint) region on each
     side of the boundary, linearly ramping from 0 to 1 (left) or 1 to 0 (right).
 
+    If the input mask is already a float mask (e.g. an extend-task mask with a
+    pre-built seam ramp), it is returned unchanged — no additional crossfade is
+    synthesized since the caller has already encoded the desired soft boundary.
+
     Args:
-        repaint_mask: Boolean [B, T], True = repaint region.
+        repaint_mask: Boolean or float [B, T], True/1.0 = repaint region.
         crossfade_frames: Width of each crossfade ramp (in latent frames).
 
     Returns:
         Soft float mask [B, T] with smooth boundary transitions.
     """
+    if repaint_mask.dtype != torch.bool:
+        return repaint_mask.clone()
+
     soft_mask = repaint_mask.float().clone()
     if crossfade_frames <= 0:
         return soft_mask

@@ -111,7 +111,7 @@ class GenerateMusicRequestMixin:
             refer_audios = [[torch.zeros(2, 30 * self.sample_rate)] for _ in range(actual_batch_size)]
 
         processed_src_audio = None
-        _src_audio_required_tasks = {"cover", "repaint", "lego", "extract"}
+        _src_audio_required_tasks = {"cover", "repaint", "lego", "extract", "extend"}
         if task_type == "text2music":
             if src_audio is not None:
                 logger.info("[generate_music] text2music task does not use src_audio, ignoring")
@@ -171,6 +171,9 @@ class GenerateMusicRequestMixin:
         repainting_start: float = 0.0,
         repainting_end: Optional[float] = None,
         chunk_mask_mode: str = "auto",
+        crop_time: float = 0.0,
+        extend_duration: float = 30.0,
+        extend_seam_overlap_sec: float = 0.5,
     ) -> Dict[str, Any]:
         """Prepare service inputs (batch text, repaint spans, and optional code hints)."""
         captions_batch, instructions_batch, lyrics_batch, vocal_languages_batch, metas_batch = self.prepare_batch_data(
@@ -188,6 +191,7 @@ class GenerateMusicRequestMixin:
         global_captions_batch = [global_caption] * actual_batch_size
 
         is_repaint_task, is_lego_task, is_cover_task, can_use_repainting = self.determine_task_type(task_type, audio_code_string)
+        is_extend_task = task_type == "extend"
         repainting_start_batch, repainting_end_batch, target_wavs_tensor = self.prepare_padding_info(
             actual_batch_size,
             processed_src_audio,
@@ -198,6 +202,9 @@ class GenerateMusicRequestMixin:
             is_lego_task,
             is_cover_task,
             can_use_repainting,
+            is_extend_task=is_extend_task,
+            crop_time=crop_time,
+            extend_duration=extend_duration,
         )
         audio_code_hints_batch = None
         if self._has_non_empty_audio_codes(audio_code_string):
@@ -205,6 +212,21 @@ class GenerateMusicRequestMixin:
                 audio_code_hints_batch = audio_code_string
             else:
                 audio_code_hints_batch = [audio_code_string] * actual_batch_size
+
+        # Per-item extend specs get forwarded so the latent/mask builders can
+        # use random-noise latents for the extension region (instead of the
+        # VAE-encoded silence that would otherwise bias the model toward a
+        # fade-out).  None indicates the item is not an extend task.
+        extend_specs_batch: Optional[List[Optional[Dict[str, float]]]] = None
+        if is_extend_task:
+            extend_specs_batch = [
+                {
+                    "crop_time": float(crop_time),
+                    "extend_duration": float(extend_duration),
+                    "seam_overlap_sec": float(extend_seam_overlap_sec),
+                }
+                for _ in range(actual_batch_size)
+            ]
 
         return {
             "captions_batch": captions_batch,
@@ -218,6 +240,7 @@ class GenerateMusicRequestMixin:
             "target_wavs_tensor": target_wavs_tensor,
             "audio_code_hints_batch": audio_code_hints_batch,
             "chunk_mask_modes_batch": [chunk_mask_mode] * actual_batch_size,
+            "extend_specs_batch": extend_specs_batch,
             "should_return_intermediate": True,
         }
 

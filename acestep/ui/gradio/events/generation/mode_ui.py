@@ -24,6 +24,7 @@ def compute_mode_ui_updates(mode: str, llm_handler=None, previous_mode: str = "C
     is_extract = (mode == "Extract")
     is_lego = (mode == "Lego")
     is_complete = (mode == "Complete")
+    is_extend = (mode == "Extend")
     leaving_extract_or_lego = previous_mode in ("Extract", "Lego")
     not_simple = not is_simple
 
@@ -32,15 +33,15 @@ def compute_mode_ui_updates(mode: str, llm_handler=None, previous_mode: str = "C
     show_custom_group = not_simple and not is_extract
     show_generate_row = not_simple
     generate_interactive = not_simple
-    show_src_audio = is_cover or is_repaint or is_extract or is_lego or is_complete
+    show_src_audio = is_cover or is_repaint or is_extract or is_lego or is_complete or is_extend
     show_optional = not_simple and not is_extract and not is_lego
-    show_repainting = is_repaint or is_lego
+    show_repainting = is_repaint or is_lego or is_extend
     show_audio_codes = is_custom
     show_track_name = is_lego or is_extract
     show_complete_classes = is_complete
 
     # Audio cover strength
-    show_strength = not is_simple and not is_repaint and not is_extract and not is_lego
+    show_strength = not is_simple and not is_repaint and not is_extract and not is_lego and not is_extend
     if is_cover:
         strength_label = t("generation.remix_strength_label")
         strength_info = t("generation.remix_strength_info")
@@ -55,7 +56,7 @@ def compute_mode_ui_updates(mode: str, llm_handler=None, previous_mode: str = "C
 
     # Think checkbox
     lm_initialized = llm_handler.llm_initialized if llm_handler else False
-    if is_extract or is_lego or is_cover or is_repaint:
+    if is_extract or is_lego or is_cover or is_repaint or is_extend:
         think_update = gr.update(interactive=False, value=False, visible=not (is_extract or is_lego))
     elif not lm_initialized:
         think_update = gr.update(interactive=False, value=False, visible=True)
@@ -72,6 +73,7 @@ def compute_mode_ui_updates(mode: str, llm_handler=None, previous_mode: str = "C
         "Extract": t("generation.mode_info_extract"),
         "Lego": t("generation.mode_info_lego"),
         "Complete": t("generation.mode_info_complete"),
+        "Extend": t("generation.mode_info_extend"),
     }
     mode_help_text = mode_descriptions.get(mode, "")
     show_results = not_simple
@@ -97,7 +99,7 @@ def compute_mode_ui_updates(mode: str, llm_handler=None, previous_mode: str = "C
 
     # --- Dynamic repainting / stem area labels (indices 30-32) ---
     repainting_header_update, repainting_start_update, repainting_end_update = _compute_repainting_labels(
-        is_lego, is_repaint,
+        is_lego, is_repaint, is_extend,
     )
 
     # --- Auto checkbox updates (indices 37-41) ---
@@ -115,7 +117,7 @@ def compute_mode_ui_updates(mode: str, llm_handler=None, previous_mode: str = "C
         auto_duration_update = gr.update()
 
     # Clear stale audio codes when leaving/returning from source-audio modes.
-    _prev_has_src_audio = previous_mode in ("Remix", "Repaint", "Extract", "Lego", "Complete")
+    _prev_has_src_audio = previous_mode in ("Remix", "Repaint", "Extract", "Lego", "Complete", "Extend")
     if is_custom:
         if _prev_has_src_audio:
             audio_codes_update = gr.update(value="", visible=True)

@@ -113,6 +113,26 @@ def generate_with_progress(
     if task_type != "text2music":
         text2music_audio_code_string = ""
 
+    # Extend mode reuses the two "repainting" time controls for
+    # ``crop_time`` and ``extend_duration`` so the UI does not need a
+    # separate pair of fields.  Map them here; the handler is still passed
+    # ``repainting_start`` / ``repainting_end`` for logging, but it will
+    # overwrite them from ``crop_time``/``extend_duration`` for the extend
+    # task.
+    _extend_crop_time: float = 0.0
+    _extend_duration: float = 30.0
+    if task_type == "extend":
+        try:
+            _extend_crop_time = float(repainting_start) if repainting_start is not None else 0.0
+        except (TypeError, ValueError):
+            _extend_crop_time = 0.0
+        try:
+            _extend_duration = float(repainting_end) if repainting_end is not None else 30.0
+        except (TypeError, ValueError):
+            _extend_duration = 30.0
+        _extend_crop_time = max(0.0, _extend_crop_time)
+        _extend_duration = max(0.1, _extend_duration)
+
     gen_params = GenerationParams(
         task_type=task_type,
         instruction=instruction_display_gen,
@@ -140,6 +160,8 @@ def generate_with_progress(
         timesteps=parsed_timesteps,
         repainting_start=repainting_start,
         repainting_end=repainting_end,
+        crop_time=_extend_crop_time,
+        extend_duration=_extend_duration,
         audio_cover_strength=audio_cover_strength,
         cover_noise_strength=cover_noise_strength,
         thinking=think_checkbox,

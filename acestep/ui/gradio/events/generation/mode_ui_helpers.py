@@ -103,7 +103,7 @@ def _compute_automation_updates(is_extract: bool, is_lego: bool, not_simple: boo
     return gr.update(), gr.update(), gr.update(), gr.update()
 
 
-def _compute_repainting_labels(is_lego: bool, is_repaint: bool):
+def _compute_repainting_labels(is_lego: bool, is_repaint: bool, is_extend: bool = False):
     """Compute gr.update() for repainting header, start, and end labels."""
     if is_lego:
         return (
@@ -116,6 +116,15 @@ def _compute_repainting_labels(is_lego: bool, is_repaint: bool):
             gr.update(value=f"<h5>{t('generation.repainting_controls')}</h5>"),
             gr.update(label=t("generation.repainting_start")),
             gr.update(label=t("generation.repainting_end")),
+        )
+    if is_extend:
+        # Extend mode reuses the two repaint time inputs as "Crop time" and
+        # "Extend duration" — the handler converts them into the repaint span
+        # [crop_time, crop_time + extend_duration].
+        return (
+            gr.update(value=f"<h5>{t('generation.extend_controls')}</h5>"),
+            gr.update(label=t("generation.extend_crop_time")),
+            gr.update(label=t("generation.extend_duration")),
         )
     return gr.update(), gr.update(), gr.update()
 

@@ -218,6 +218,9 @@ class GenerateMusicMixin:
         repaint_wav_crossfade_sec: float = 0.0,
         repaint_mode: str = "balanced",
         repaint_strength: float = 0.5,
+        crop_time: float = 0.0,
+        extend_duration: float = 30.0,
+        extend_seam_overlap_sec: float = 0.5,
         progress=None,
     ) -> Dict[str, Any]:
         """Generate audio from text/reference inputs and return response payload.
@@ -310,6 +313,28 @@ class GenerateMusicMixin:
             ):
                 audio_duration = processed_src_audio.shape[-1] / self.sample_rate
 
+            # Extend: clamp crop_time to the actual source length, then set the
+            # total duration = crop + extend_duration.  extend_duration must be
+            # positive or there is nothing to generate.
+            if task_type == "extend":
+                src_len_sec = (
+                    processed_src_audio.shape[-1] / self.sample_rate
+                    if processed_src_audio is not None else 0.0
+                )
+                clamped_crop = max(0.0, min(float(crop_time), src_len_sec))
+                ext_d = max(0.1, float(extend_duration))
+                if clamped_crop != crop_time:
+                    logger.info(
+                        "[generate_music] extend: clamping crop_time {:.3f}s to [0, {:.3f}s]",
+                        float(crop_time), src_len_sec,
+                    )
+                crop_time = clamped_crop
+                extend_duration = ext_d
+                audio_duration = crop_time + extend_duration
+                # repainting span covers the generated tail.
+                repainting_start = crop_time
+                repainting_end = crop_time + extend_duration
+
             service_inputs = self._prepare_generate_music_service_inputs(
                 actual_batch_size=actual_batch_size,
                 processed_src_audio=processed_src_audio,
@@ -327,6 +352,9 @@ class GenerateMusicMixin:
                 repainting_start=repainting_start,
                 repainting_end=repainting_end,
                 chunk_mask_mode=chunk_mask_mode,
+                crop_time=crop_time,
+                extend_duration=extend_duration,
+                extend_seam_overlap_sec=extend_seam_overlap_sec,
             )
             vram_error = self._vram_preflight_check(
                 actual_batch_size=actual_batch_size,
@@ -388,13 +416,21 @@ class GenerateMusicMixin:
                 and repainting_end_batch is not None
             )
             if do_wav_splice:
+                # For extend we always want the kept region restored from the
+                # original source and a small wav-level crossfade at the seam
+                # so any residual VAE reconstruction drift doesn't cause a
+                # click.  If the caller didn't ask for a crossfade explicitly
+                # (resolved_wav_cf == 0), use a 20 ms default.
+                splice_crossfade = resolved_wav_cf
+                if task_type == "extend" and splice_crossfade <= 0.0:
+                    splice_crossfade = 0.02
                 pred_wavs = apply_repaint_waveform_splice(
                     pred_wavs=pred_wavs,
                     src_wavs=service_inputs["target_wavs_tensor"],
                     repainting_starts=repainting_start_batch,
                     repainting_ends=repainting_end_batch,
                     sample_rate=self.sample_rate,
-                    crossfade_duration=resolved_wav_cf,
+                    crossfade_duration=splice_crossfade,
                 )
             result = self._build_generate_music_success_payload(
                 outputs=outputs,

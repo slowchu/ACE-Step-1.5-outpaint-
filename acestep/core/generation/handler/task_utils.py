@@ -101,6 +101,7 @@ class TaskUtilsMixin:
         is_repaint_task = task_type == "repaint"
         is_lego_task = task_type == "lego"
         is_cover_task = task_type == "cover"
+        is_extend_task = task_type == "extend"
 
         if isinstance(audio_code_string, list):
             has_codes = any((c or "").strip() for c in audio_code_string)
@@ -109,7 +110,10 @@ class TaskUtilsMixin:
 
         if has_codes:
             is_cover_task = True
-        can_use_repainting = is_repaint_task or is_lego_task
+        # Extend piggy-backs on the repaint diffusion machinery (mask +
+        # source-latent injection), so it flows through the repainting
+        # codepath in downstream mixins.
+        can_use_repainting = is_repaint_task or is_lego_task or is_extend_task
         return is_repaint_task, is_lego_task, is_cover_task, can_use_repainting
 
     def create_target_wavs(self, duration_seconds: float) -> torch.Tensor:
