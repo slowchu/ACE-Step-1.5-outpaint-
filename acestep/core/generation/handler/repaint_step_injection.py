@@ -1,6 +1,7 @@
 """Step-level repaint injection and boundary blending for diffusion loops."""
 
 import torch
+from loguru import logger
 
 
 def apply_repaint_step_injection(
@@ -9,6 +10,9 @@ def apply_repaint_step_injection(
     repaint_mask: torch.Tensor,
     t_next: float,
     noise: torch.Tensor,
+    step_idx: int = -1,
+    total_steps: int = -1,
+    injection_cutoff: int = -1,
 ) -> torch.Tensor:
     """Replace non-repaint regions of xt with noised source latents.
 
@@ -32,6 +36,34 @@ def apply_repaint_step_injection(
     Returns:
         Updated xt with non-repaint regions replaced by noised source.
     """
+    # Diagnostic: log at first step, final-injection step, and around the
+    # cutoff so we can verify (a) the float path is being taken for extend,
+    # (b) the seam ramp is present in the mask, and (c) the injection is
+    # actually ending when we expect it to.
+    _log_this_step = step_idx in (0, 1) or (
+        injection_cutoff > 0 and step_idx in (injection_cutoff - 1, injection_cutoff)
+    ) or (total_steps > 0 and step_idx == total_steps - 1)
+    if _log_this_step:
+        _is_float = repaint_mask.dtype != torch.bool
+        _m0 = repaint_mask[0]
+        _first = _m0[:3].float().tolist()
+        _last = _m0[-3:].float().tolist()
+        _ramp_present = False
+        if _is_float:
+            _mid = _m0
+            _ramp_present = bool(((_mid > 0.0) & (_mid < 1.0)).any().item())
+        logger.info(
+            "[repaint_inject] step {}/{} cutoff={} t_next={:.4f} "
+            "mask.dtype={} path={} first3={} last3={} ramp_present={} "
+            "xt[range]=({:.3f},{:.3f}) noise[range]=({:.3f},{:.3f})",
+            step_idx, total_steps, injection_cutoff, float(t_next),
+            repaint_mask.dtype,
+            "FLOAT_BLEND" if _is_float else "BOOL_WHERE",
+            _first, _last, _ramp_present,
+            xt.min().item(), xt.max().item(),
+            noise.min().item(), noise.max().item(),
+        )
+
     zt_src = t_next * noise + (1.0 - t_next) * clean_src_latents
     if repaint_mask.dtype == torch.bool:
         mask_expanded = repaint_mask.unsqueeze(-1).expand_as(xt)
