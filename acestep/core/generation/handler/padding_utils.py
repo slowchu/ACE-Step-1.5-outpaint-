@@ -53,6 +53,15 @@ class PaddingMixin:
                         batch_target_wavs = torch.nn.functional.pad(
                             cropped, (0, ext_samples), "constant", 0
                         )
+                        logger.info(
+                            "[extend-trace][padding_utils] item {}: src_len={} "
+                            "crop_time={}s -> crop_samples={} "
+                            "extend_duration={}s -> ext_samples={} "
+                            "target_wavs.shape={}",
+                            i, src_len, crop_time, crop_samples,
+                            extend_duration, ext_samples,
+                            tuple(batch_target_wavs.shape),
+                        )
                         padding_info_batch.append({"left_padding_duration": 0.0, "right_padding_duration": 0.0})
                     elif is_cover_task:
                         # Cover task: Use src_audio directly without padding

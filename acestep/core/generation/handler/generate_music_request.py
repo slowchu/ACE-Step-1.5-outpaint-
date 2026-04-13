@@ -192,6 +192,16 @@ class GenerateMusicRequestMixin:
 
         is_repaint_task, is_lego_task, is_cover_task, can_use_repainting = self.determine_task_type(task_type, audio_code_string)
         is_extend_task = task_type == "extend"
+        if is_extend_task:
+            logger.info(
+                "[extend-trace][generate_music_request] task_type={} crop_time={} "
+                "extend_duration={} extend_seam_overlap_sec={} "
+                "repainting_start={} repainting_end={} audio_duration={} "
+                "src_audio_present={} actual_batch_size={}",
+                task_type, crop_time, extend_duration, extend_seam_overlap_sec,
+                repainting_start, repainting_end, audio_duration,
+                processed_src_audio is not None, actual_batch_size,
+            )
         repainting_start_batch, repainting_end_batch, target_wavs_tensor = self.prepare_padding_info(
             actual_batch_size,
             processed_src_audio,
@@ -227,6 +237,13 @@ class GenerateMusicRequestMixin:
                 }
                 for _ in range(actual_batch_size)
             ]
+            logger.info(
+                "[extend-trace][generate_music_request] built extend_specs_batch[0]={} "
+                "target_wavs_tensor.shape={} repainting_start_batch={} repainting_end_batch={}",
+                extend_specs_batch[0] if extend_specs_batch else None,
+                tuple(target_wavs_tensor.shape),
+                repainting_start_batch, repainting_end_batch,
+            )
 
         return {
             "captions_batch": captions_batch,

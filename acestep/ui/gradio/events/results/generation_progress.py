@@ -132,6 +132,14 @@ def generate_with_progress(
             _extend_duration = 30.0
         _extend_crop_time = max(0.0, _extend_crop_time)
         _extend_duration = max(0.1, _extend_duration)
+        logger.info(
+            "[extend-trace][generation_progress] task_type={} "
+            "repainting_start(ui)={} repainting_end(ui)={} "
+            "-> crop_time={:.3f}s extend_duration={:.3f}s "
+            "(audio_duration UI slider was {}, will be ignored by inference.py)",
+            task_type, repainting_start, repainting_end,
+            _extend_crop_time, _extend_duration, audio_duration,
+        )
 
     gen_params = GenerationParams(
         task_type=task_type,

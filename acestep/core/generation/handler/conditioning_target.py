@@ -86,6 +86,13 @@ class ConditioningTargetMixin:
 
                         crop_latent_len = max(0, crop_samples // 1920)
                         ext_latent_len = max(1, int(round(ext_d * 25.0)))
+                        logger.info(
+                            "[extend-trace][conditioning_target] item {}: spec={} "
+                            "full_wav.shape={} crop_samples={} crop_latent_len={} "
+                            "ext_latent_len={}",
+                            i, spec, tuple(full_wav.shape), crop_samples,
+                            crop_latent_len, ext_latent_len,
+                        )
 
                         if crop_latent_len > 0 and not self.is_silence(cropped_wav):
                             logger.info(
@@ -117,6 +124,14 @@ class ConditioningTargetMixin:
                             dtype=src_latent.dtype,
                         )
                         target_latent = torch.cat([src_latent, noise_latent], dim=0)
+                        logger.info(
+                            "[extend-trace][conditioning_target] item {}: "
+                            "src_latent.shape={} noise_latent.shape={} "
+                            "target_latent.shape={}",
+                            i, tuple(src_latent.shape),
+                            tuple(noise_latent.shape),
+                            tuple(target_latent.shape),
+                        )
                         target_latents_list.append(target_latent)
                         latent_lengths.append(target_latent.shape[0])
                         continue
