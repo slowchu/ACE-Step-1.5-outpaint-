@@ -321,6 +321,12 @@ class GenerateMusicMixin:
                     processed_src_audio.shape[-1] / self.sample_rate
                     if processed_src_audio is not None else 0.0
                 )
+                logger.info(
+                    "[extend-trace][generate_music] received crop_time={} extend_duration={} "
+                    "src_len_sec={:.3f} audio_duration(in)={} repainting_start(in)={} repainting_end(in)={}",
+                    crop_time, extend_duration, src_len_sec,
+                    audio_duration, repainting_start, repainting_end,
+                )
                 clamped_crop = max(0.0, min(float(crop_time), src_len_sec))
                 ext_d = max(0.1, float(extend_duration))
                 if clamped_crop != crop_time:
@@ -334,6 +340,12 @@ class GenerateMusicMixin:
                 # repainting span covers the generated tail.
                 repainting_start = crop_time
                 repainting_end = crop_time + extend_duration
+                logger.info(
+                    "[extend-trace][generate_music] resolved crop_time={:.3f}s extend_duration={:.3f}s "
+                    "audio_duration={:.3f}s repainting_start={:.3f}s repainting_end={:.3f}s",
+                    crop_time, extend_duration, audio_duration,
+                    repainting_start, repainting_end,
+                )
 
             service_inputs = self._prepare_generate_music_service_inputs(
                 actual_batch_size=actual_batch_size,

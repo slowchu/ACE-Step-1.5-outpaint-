@@ -628,6 +628,14 @@ def generate_music(
             crop_t = max(0.0, float(params.crop_time))
             ext_d = max(0.1, float(params.extend_duration))
             audio_duration = crop_t + ext_d
+            logger.info(
+                "[extend-trace][inference] params.crop_time={} params.extend_duration={} "
+                "params.repainting_start={} params.repainting_end={} "
+                "-> clamped crop_t={:.3f}s ext_d={:.3f}s audio_duration={:.3f}s",
+                params.crop_time, params.extend_duration,
+                params.repainting_start, params.repainting_end,
+                crop_t, ext_d, audio_duration,
+            )
 
         # Phase 2: DiT music generation
         # Use seed_for_generation (from config.seed or params.seed) instead of params.seed for actual generation
