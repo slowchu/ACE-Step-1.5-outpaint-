@@ -2144,7 +2144,36 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
                 prev_vt = vt
 
                 injection_cutoff = round(repaint_injection_ratio * infer_steps)
+
+                # [extend-trace] xt value-range diagnostics at key steps —
+                # detect divergence (NaN / inf / norm blow-up) which would
+                # manifest as gibberish in the extension region.
+                if step_idx in (0, infer_steps // 2, infer_steps - 1):
+                    _xt_min = xt.min().item()
+                    _xt_max = xt.max().item()
+                    _xt_mean = xt.mean().item()
+                    _xt_nan = int(torch.isnan(xt).sum().item())
+                    _xt_inf = int(torch.isinf(xt).sum().item())
+                    logger.info(
+                        f"[extend-trace] xt stats step {step_idx}/{infer_steps} "
+                        f"t_curr={t_curr:.4f} t_after={t_after_step:.4f} "
+                        f"min={_xt_min:.4f} max={_xt_max:.4f} mean={_xt_mean:.4f} "
+                        f"nan={_xt_nan} inf={_xt_inf}"
+                    )
+
                 if repaint_mask is not None and clean_src_latents is not None and step_idx < injection_cutoff:
+                    if step_idx in (0, injection_cutoff - 1) or (step_idx == 1 and injection_cutoff > 2):
+                        _m0 = repaint_mask[0]
+                        _first = _m0[:3].float().tolist()
+                        _last = _m0[-3:].float().tolist()
+                        _is_float = repaint_mask.dtype != torch.bool
+                        logger.info(
+                            f"[extend-trace] step-inject step {step_idx}/{infer_steps} "
+                            f"cutoff={injection_cutoff} ratio={repaint_injection_ratio} "
+                            f"mask.dtype={repaint_mask.dtype} "
+                            f"path={'FLOAT_BLEND' if _is_float else 'BOOL_WHERE'} "
+                            f"first3={_first} last3={_last} t_after={t_after_step:.4f}"
+                        )
                     xt = _repaint_step_injection(
                         xt, clean_src_latents, repaint_mask, t_after_step, noise,
                     )

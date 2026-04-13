@@ -114,10 +114,56 @@ class ConditioningMaskMixin:
             is_covers.append(is_cover)
 
         chunk_masks_tensor = torch.stack(chunk_masks)
+
+        # Diagnostic: dump chunk_masks per extend item BEFORE any auto-mode
+        # overwrite.  The DiT's ``prepare_condition`` consumes these per-frame
+        # flags (context vs generation target), so if they disagree with
+        # ``repaint_mask`` the model silently plays both sides against the
+        # middle and the extension region degenerates into gibberish.
+        for _i in extend_ranges.keys():
+            _m = chunk_masks_tensor[_i]
+            _true_count = int(_m.sum().item()) if _m.dtype == torch.bool else int((_m > 0).sum().item())
+            _mode = (
+                chunk_mask_modes[_i]
+                if chunk_mask_modes and _i < len(chunk_mask_modes)
+                else None
+            )
+            _s, _e, _seam = extend_ranges[_i]
+            logger.info(
+                "[conditioning_masks] chunk_masks[{}] (extend) BEFORE auto: "
+                "dtype={} shape={} true/nonzero_count={} "
+                "kept=[0:{}]={} ext=[{}:{}]={} mode={!r}",
+                _i, _m.dtype, tuple(_m.shape), _true_count,
+                _s, _m[:_s].float().mean().item() if _s > 0 else "n/a",
+                _s, _e, _m[_s:_e].float().mean().item(),
+                _mode,
+            )
+
         if chunk_mask_modes:
             for i, mode in enumerate(chunk_mask_modes):
                 if mode == "auto":
+                    if i in extend_ranges:
+                        logger.warning(
+                            "[conditioning_masks] chunk_masks[{}] (extend) "
+                            "auto-mode OVERWRITES to 2.0 — this may erase the "
+                            "explicit extend region/kept split and is a likely "
+                            "gibberish cause",
+                            i,
+                        )
                     chunk_masks_tensor[i] = 2.0
+
+        # Diagnostic: dump chunk_masks per extend item AFTER auto-mode overwrite.
+        for _i in extend_ranges.keys():
+            _m = chunk_masks_tensor[_i]
+            _s, _e, _seam = extend_ranges[_i]
+            logger.info(
+                "[conditioning_masks] chunk_masks[{}] (extend) AFTER auto: "
+                "dtype={} kept_mean={} ext_mean={} (prepare_condition input)",
+                _i, _m.dtype,
+                _m[:_s].float().mean().item() if _s > 0 else "n/a",
+                _m[_s:_e].float().mean().item(),
+            )
+
         is_covers_tensor = torch.BoolTensor(is_covers).to(self.device)
 
         src_latents_list = []
