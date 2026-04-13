@@ -152,6 +152,15 @@ class GenerationParams:
     audio_cover_strength: float = 1.0
     cover_noise_strength: float = 0.0  # 0=pure noise (no cover), 1=closest to src audio
 
+    # Extend (audio outpaint) parameters — only used when task_type == "extend".
+    # crop_time: seconds from the start of src_audio that are preserved exactly.
+    # extend_duration: seconds of genuinely new audio to generate after the crop.
+    # extend_seam_overlap_sec: duration over which the boundary mask ramps 0→1
+    #   so the seam between kept and generated audio is not abrupt (~0.5-1.0s).
+    crop_time: float = 0.0
+    extend_duration: float = 30.0
+    extend_seam_overlap_sec: float = 0.5
+
     # 5Hz Language Model Parameters
     thinking: bool = True
     lm_temperature: float = 0.85
@@ -409,11 +418,13 @@ def generate_music(
         actual_seed_list, _ = dit_handler.prepare_seeds(actual_batch_size, seed_for_generation, config.use_random_seed)
 
         # LM-based Chain-of-Thought reasoning
-        # Skip LM for cover/repaint/extract tasks - these tasks use reference/src audio directly
-        # and don't need LM to generate audio codes or metadata.
+        # Skip LM for cover/repaint/extract/extend tasks - these tasks use reference/src audio
+        # directly and don't need LM to generate audio codes or metadata.
         # For extract tasks, LLM-generated captions can conflict with the extract instruction
         # and cause the DiT model to reconstruct input audio instead of extracting stems.
-        skip_lm_tasks = {"cover", "repaint", "extract"}
+        # For extend tasks, the source audio itself provides the musical context; the LM
+        # tends to hallucinate continuations that fight the DiT's own in-context extension.
+        skip_lm_tasks = {"cover", "repaint", "extract", "extend"}
         
         # Determine if we should use LLM
         # LLM is needed for:
@@ -596,8 +607,8 @@ def generate_music(
             if params.use_cot_language:
                 dit_input_vocal_language = lm_generated_metadata.get("vocal_language", dit_input_vocal_language)
 
-        # Repaint/cover/extract: no LM run, so conditioning must come from params (caption + lyrics from GUI).
-        if params.task_type in ("repaint", "cover", "extract"):
+        # Repaint/cover/extract/extend: no LM run, so conditioning must come from params (caption + lyrics from GUI).
+        if params.task_type in ("repaint", "cover", "extract", "extend"):
             dit_input_caption = params.caption or dit_input_caption
             dit_input_lyrics = params.lyrics if params.lyrics is not None else dit_input_lyrics
             logger.info(f"[generate_music] {params.task_type} task: using params.caption='{params.caption}', params.lyrics='{params.lyrics}'")
@@ -606,8 +617,17 @@ def generate_music(
         # Cover/repaint/lego/extract: duration is locked to the source audio
         # length.  Silently ignore whatever the caller passed — the handler
         # will set audio_duration from the loaded waveform.
+        # Extend is deliberately NOT in this list: its total duration is
+        # crop_time + extend_duration, not the source audio duration.
         if params.task_type in ("cover", "repaint", "lego", "extract"):
             audio_duration = None
+        elif params.task_type == "extend":
+            # Total output length for extend = kept portion + newly generated.
+            # Pass it explicitly so the handler does not fall back to the
+            # padded-to-source-duration default.
+            crop_t = max(0.0, float(params.crop_time))
+            ext_d = max(0.1, float(params.extend_duration))
+            audio_duration = crop_t + ext_d
 
         # Phase 2: DiT music generation
         # Use seed_for_generation (from config.seed or params.seed) instead of params.seed for actual generation
@@ -637,6 +657,9 @@ def generate_music(
             "repaint_wav_crossfade_sec": params.repaint_wav_crossfade_sec,
             "repaint_mode": params.repaint_mode,
             "repaint_strength": params.repaint_strength,
+            "crop_time": params.crop_time,
+            "extend_duration": params.extend_duration,
+            "extend_seam_overlap_sec": params.extend_seam_overlap_sec,
             "instruction": params.instruction,
             "audio_cover_strength": params.audio_cover_strength,
             "cover_noise_strength": params.cover_noise_strength,

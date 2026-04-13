@@ -71,20 +71,27 @@ VALID_TIME_SIGNATURES = [2, 3, 4, 6]
 # ==============================================================================
 
 # All supported generation tasks across different model variants
-TASK_TYPES = ["text2music", "repaint", "cover", "extract", "lego", "complete"]
+TASK_TYPES = ["text2music", "repaint", "cover", "extract", "lego", "complete", "extend"]
 
 # Task types available for turbo models (optimized subset for speed)
 # - text2music: Generate from text descriptions
-# - repaint: Selective audio editing/regeneration  
+# - repaint: Selective audio editing/regeneration
 # - cover: Style transfer using reference audio
-TASK_TYPES_TURBO = ["text2music", "repaint", "cover"]
+# - extend: Outpaint — crop source at a timestamp and generate new audio
+#   beyond that point (distinct from repaint: extend uses random-noise
+#   latents in the extension region instead of VAE-encoded silence, so the
+#   model generates fresh content rather than preserving existing structure).
+TASK_TYPES_TURBO = ["text2music", "repaint", "cover", "extend"]
 
 # Task types available for base models (full feature set)
 # Additional tasks requiring more computational resources:
 # - extract: Separate individual tracks/stems from audio
 # - lego: Multi-track generation (add layers)
 # - complete: Automatic completion of partial audio
-TASK_TYPES_BASE = ["text2music", "repaint", "cover", "extract", "lego", "complete"]
+# - extend: Outpaint a song beyond a crop point (see note above)
+TASK_TYPES_BASE = [
+    "text2music", "repaint", "cover", "extract", "lego", "complete", "extend",
+]
 
 
 # ==============================================================================
@@ -92,10 +99,13 @@ TASK_TYPES_BASE = ["text2music", "repaint", "cover", "extract", "lego", "complet
 # ==============================================================================
 
 # Default modes for turbo and SFT models (restricted set)
-GENERATION_MODES_TURBO = ["Simple", "Custom", "Remix", "Repaint"]
+GENERATION_MODES_TURBO = ["Simple", "Custom", "Remix", "Repaint", "Extend"]
 
 # Extended modes for pure base models only — adds Extract/Lego/Complete
-GENERATION_MODES_BASE = ["Simple", "Custom", "Remix", "Repaint", "Extract", "Lego", "Complete"]
+GENERATION_MODES_BASE = [
+    "Simple", "Custom", "Remix", "Repaint", "Extend",
+    "Extract", "Lego", "Complete",
+]
 
 # Mapping from generation mode to task_type value
 MODE_TO_TASK_TYPE = {
@@ -103,6 +113,7 @@ MODE_TO_TASK_TYPE = {
     "Custom": "text2music",
     "Remix": "cover",
     "Repaint": "repaint",
+    "Extend": "extend",
     "Extract": "extract",
     "Lego": "lego",
     "Complete": "complete",
@@ -133,6 +144,10 @@ TASK_INSTRUCTIONS = {
     "lego_default": "Generate the track based on the audio context:",
     "complete": "Complete the input track with {TRACK_CLASSES}:",
     "complete_default": "Complete the input track:",
+    # Extend reuses the repaint family of instructions because the DiT model
+    # was not trained on a dedicated "extend" verb — the task is expressed as
+    # repainting a mask region whose latents happen to be random noise.
+    "extend": "Repaint the mask area based on the given conditions:",
 }
 
 

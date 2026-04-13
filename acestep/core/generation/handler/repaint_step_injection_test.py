@@ -157,5 +157,86 @@ class TestApplyRepaintBoundaryBlend(unittest.TestCase):
             self.assertLess(val, 1.0)
 
 
+class TestFloatMaskStepInjection(unittest.TestCase):
+    """Tests for step injection with float (soft) masks used by the extend task.
+
+    The extend task produces a seam-ramped ``[B, T]`` float mask in ``[0, 1]``
+    where 1.0 = generate, 0.0 = preserve, fractional = blend.  ``apply_repaint_
+    step_injection`` must implement the blend ``xt_new = m * xt + (1 - m) *
+    zt_src`` for these masks while preserving the hard-boolean behavior used
+    by repaint/lego for back-compat.
+    """
+
+    def setUp(self):
+        self.B, self.T, self.C = 1, 40, 8
+        self.xt = torch.randn(self.B, self.T, self.C)
+        self.clean_src = torch.randn(self.B, self.T, self.C)
+        self.noise = torch.randn(self.B, self.T, self.C)
+
+    def test_float_mask_all_ones_returns_xt(self):
+        mask = torch.ones(self.B, self.T, dtype=torch.float32)
+        result = apply_repaint_step_injection(self.xt, self.clean_src, mask, 0.5, self.noise)
+        torch.testing.assert_close(result, self.xt)
+
+    def test_float_mask_all_zeros_returns_noised_source(self):
+        mask = torch.zeros(self.B, self.T, dtype=torch.float32)
+        t_next = 0.3
+        result = apply_repaint_step_injection(self.xt, self.clean_src, mask, t_next, self.noise)
+        expected = t_next * self.noise + (1.0 - t_next) * self.clean_src
+        torch.testing.assert_close(result, expected)
+
+    def test_float_mask_half_blends_equally(self):
+        mask = torch.full((self.B, self.T), 0.5, dtype=torch.float32)
+        t_next = 0.4
+        result = apply_repaint_step_injection(self.xt, self.clean_src, mask, t_next, self.noise)
+        zt_src = t_next * self.noise + (1.0 - t_next) * self.clean_src
+        expected = 0.5 * self.xt + 0.5 * zt_src
+        torch.testing.assert_close(result, expected)
+
+    def test_float_mask_ramp_is_monotonic(self):
+        mask = torch.zeros(self.B, self.T, dtype=torch.float32)
+        # Ramp up from 0 to 1 across 20 frames
+        mask[0, 10:30] = torch.linspace(0.0, 1.0, 20)
+        mask[0, 30:] = 1.0
+        t_next = 0.5
+        result = apply_repaint_step_injection(self.xt, self.clean_src, mask, t_next, self.noise)
+        # Inside the ramp, successive frames must blend more and more toward xt.
+        # Measure L2 distance from zt_src: it should be non-decreasing as the
+        # mask rises from 0 to 1 (assuming xt and zt_src differ, which they do
+        # here because they are drawn from independent Gaussians).
+        zt_src = t_next * self.noise + (1.0 - t_next) * self.clean_src
+        dist = (result[0, 10:30] - zt_src[0, 10:30]).norm(dim=-1)
+        diffs = dist[1:] - dist[:-1]
+        # Allow a small numerical tolerance but all jumps should be >= 0
+        self.assertTrue((diffs >= -1e-5).all().item(),
+                        f"Expected monotonic distance increase, got {diffs}")
+
+    def test_float_mask_preserves_boolean_equivalence(self):
+        bool_mask = torch.zeros(self.B, self.T, dtype=torch.bool)
+        bool_mask[0, 10:30] = True
+        float_mask = bool_mask.float()
+        t_next = 0.25
+        result_bool = apply_repaint_step_injection(
+            self.xt, self.clean_src, bool_mask, t_next, self.noise,
+        )
+        result_float = apply_repaint_step_injection(
+            self.xt, self.clean_src, float_mask, t_next, self.noise,
+        )
+        torch.testing.assert_close(result_bool, result_float)
+
+
+class TestBuildSoftMaskAcceptsFloat(unittest.TestCase):
+    """Ensure build_soft_repaint_mask passes pre-built float masks through."""
+
+    def test_float_input_returned_unchanged(self):
+        soft_in = torch.zeros(1, 50, dtype=torch.float32)
+        soft_in[0, 20:40] = 1.0
+        soft_in[0, 15:20] = torch.linspace(0.0, 1.0, 5)
+        out = build_soft_repaint_mask(soft_in, crossfade_frames=5)
+        torch.testing.assert_close(out, soft_in)
+        # It must return a distinct tensor so upstream writes don't mutate in.
+        self.assertIsNot(out, soft_in)
+
+
 if __name__ == "__main__":
     unittest.main()

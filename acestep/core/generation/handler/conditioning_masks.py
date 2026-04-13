@@ -1,6 +1,6 @@
 """Chunk-mask and source-latent helpers for batch conditioning."""
 
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
@@ -28,6 +28,7 @@ class ConditioningMaskMixin:
         repainting_end: Optional[List[float]],
         silence_latent_tiled: torch.Tensor,
         chunk_mask_modes: Optional[List[str]] = None,
+        extend_specs: Optional[List[Optional[Dict[str, Any]]]] = None,
     ) -> Tuple[
         torch.Tensor,
         List[Tuple[str, int, int]],
@@ -39,13 +40,20 @@ class ConditioningMaskMixin:
 
         Returns:
             Tuple of (chunk_masks, spans, is_covers, src_latents, repaint_mask).
-            ``repaint_mask`` is a boolean ``[B, T]`` tensor (True = generate,
-            False = preserve source) when any item uses repainting, else ``None``.
+            ``repaint_mask`` is either a boolean ``[B, T]`` tensor (True =
+            generate, False = preserve source) or, when any extend item is
+            present, a float ``[B, T]`` tensor with soft ramps at the
+            kept↔generated seam.  Values in [0, 1]: 1 = generate (model free),
+            0 = preserve source, fractional = blend.
         """
+        if extend_specs is None:
+            extend_specs = [None] * batch_size
+
         chunk_masks = []
         spans = []
         is_covers = []
         repainting_ranges: Dict[int, Tuple[int, int]] = {}
+        extend_ranges: Dict[int, Tuple[int, int, int]] = {}
 
         for i in range(batch_size):
             has_code_hint = audio_code_hints[i] is not None
@@ -66,6 +74,11 @@ class ConditioningMaskMixin:
                     chunk_masks.append(mask)
                     spans.append(("repainting", start_latent, end_latent))
                     repainting_ranges[i] = (start_latent, end_latent)
+                    spec_i = extend_specs[i] if i < len(extend_specs) else None
+                    if spec_i is not None:
+                        seam_sec = float(spec_i.get("seam_overlap_sec", 0.5))
+                        seam_frames = max(0, int(round(seam_sec * 25.0)))
+                        extend_ranges[i] = (start_latent, end_latent, seam_frames)
                     is_covers.append(False)
                     continue
 
@@ -96,7 +109,18 @@ class ConditioningMaskMixin:
                     start_latent, end_latent = repainting_ranges[i]
                     instruction_i = instructions[i] if instructions and i < len(instructions) else ""
                     is_lego = _LEGO_INSTRUCTION_MARKER in instruction_i.lower()
-                    if not is_lego:
+                    if i in extend_ranges:
+                        # Seed the extension region with random noise — never
+                        # VAE-encoded silence — so the step-injection blend
+                        # does not bias the generated tail toward a fade-out.
+                        seg = torch.randn(
+                            end_latent - start_latent,
+                            src_latent.shape[-1],
+                            device=src_latent.device,
+                            dtype=src_latent.dtype,
+                        )
+                        src_latent[start_latent:end_latent] = seg
+                    elif not is_lego:
                         src_latent[start_latent:end_latent] = silence_latent_tiled[start_latent:end_latent]
                     src_latents_list.append(src_latent)
                 else:
@@ -107,11 +131,42 @@ class ConditioningMaskMixin:
 
         repaint_mask: Optional[torch.Tensor] = None
         if repainting_ranges:
-            repaint_mask = torch.ones(
-                batch_size, max_latent_length, dtype=torch.bool, device=self.device,
-            )
-            for i, (start_latent, end_latent) in repainting_ranges.items():
-                repaint_mask[i] = False
-                repaint_mask[i, start_latent:end_latent] = True
+            if extend_ranges:
+                # Float mask with soft seam ramp on the kept-side edge so the
+                # step-injection blend transitions smoothly between the
+                # preserved source latents and the generated extension.
+                repaint_mask = torch.zeros(
+                    batch_size, max_latent_length, dtype=torch.float32, device=self.device,
+                )
+                for i, (start_latent, end_latent) in repainting_ranges.items():
+                    repaint_mask[i, start_latent:end_latent] = 1.0
+                    if i in extend_ranges:
+                        _s, _e, seam = extend_ranges[i]
+                        if seam > 0:
+                            ramp_end = min(max_latent_length, _s + seam)
+                            ramp_start = max(0, _s - seam)
+                            if ramp_end > _s:
+                                n = ramp_end - _s
+                                ramp = torch.linspace(
+                                    1.0, 0.0, steps=n + 1, device=self.device,
+                                )[:-1]
+                                repaint_mask[i, _s:ramp_end] = torch.maximum(
+                                    repaint_mask[i, _s:ramp_end], ramp
+                                )
+                            if _s > ramp_start:
+                                n = _s - ramp_start
+                                ramp = torch.linspace(
+                                    0.0, 1.0, steps=n + 1, device=self.device,
+                                )[1:]
+                                repaint_mask[i, ramp_start:_s] = torch.maximum(
+                                    repaint_mask[i, ramp_start:_s], ramp
+                                )
+            else:
+                repaint_mask = torch.ones(
+                    batch_size, max_latent_length, dtype=torch.bool, device=self.device,
+                )
+                for i, (start_latent, end_latent) in repainting_ranges.items():
+                    repaint_mask[i] = False
+                    repaint_mask[i, start_latent:end_latent] = True
 
         return chunk_masks_tensor, spans, is_covers_tensor, src_latents, repaint_mask

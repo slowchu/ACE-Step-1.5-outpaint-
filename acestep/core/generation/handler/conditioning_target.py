@@ -1,6 +1,6 @@
 """Target-latent preparation helpers for handler batch conditioning."""
 
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 from loguru import logger
@@ -37,9 +37,19 @@ class ConditioningTargetMixin:
         batch_size: int,
         target_wavs: torch.Tensor,
         audio_code_hints: List[Optional[str]],
+        extend_specs: Optional[List[Optional[Dict[str, Any]]]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, torch.Tensor]:
-        """Encode target audio/codes to latents and pad batch tensors."""
+        """Encode target audio/codes to latents and pad batch tensors.
+
+        For items with a non-None ``extend_specs`` entry, only the cropped
+        source region is VAE-encoded.  The extension region is filled with
+        random-noise latents (``torch.randn_like``) rather than VAE-encoded
+        silence so the model is not biased toward fading out.
+        """
         self._ensure_silence_latent_on_device()
+
+        if extend_specs is None:
+            extend_specs = [None] * batch_size
 
         with torch.inference_mode():
             target_latents_list = []
@@ -64,6 +74,52 @@ class ConditioningTargetMixin:
                             frames_from_codes = max(1, int(decoded_latents.shape[0] * 1920))
                             target_wavs_list[i] = torch.zeros(2, frames_from_codes)
                             continue
+
+                    spec = extend_specs[i] if i < len(extend_specs) else None
+                    if spec is not None:
+                        crop_t = float(spec.get("crop_time", 0.0))
+                        ext_d = float(spec.get("extend_duration", 0.0))
+                        crop_samples = int(max(0.0, crop_t) * 48000)
+                        full_wav = target_wavs_list[i]
+                        crop_samples = min(crop_samples, full_wav.shape[-1])
+                        cropped_wav = full_wav[..., :crop_samples].to(self.device).unsqueeze(0)
+
+                        crop_latent_len = max(0, crop_samples // 1920)
+                        ext_latent_len = max(1, int(round(ext_d * 25.0)))
+
+                        if crop_latent_len > 0 and not self.is_silence(cropped_wav):
+                            logger.info(
+                                f"[generate_music] Encoding cropped source ({crop_t:.2f}s) for extend item {i}..."
+                            )
+                            src_latent = self._encode_audio_to_latents(cropped_wav.squeeze(0))
+                            if src_latent.shape[0] > crop_latent_len:
+                                src_latent = src_latent[:crop_latent_len]
+                            elif src_latent.shape[0] < crop_latent_len:
+                                pad = self._get_silence_latent_slice(crop_latent_len - src_latent.shape[0])
+                                src_latent = torch.cat([src_latent, pad], dim=0)
+                        elif crop_latent_len > 0:
+                            src_latent = self._get_silence_latent_slice(crop_latent_len)
+                        else:
+                            src_latent = torch.zeros(
+                                0,
+                                self.silence_latent.shape[-1],
+                                device=self.device,
+                                dtype=self.silence_latent.dtype,
+                            )
+
+                        # Use random-noise latents for the extension region so
+                        # the diffusion process is seeded with noise (not a
+                        # silence bias) over the generated span.
+                        noise_latent = torch.randn(
+                            ext_latent_len,
+                            self.silence_latent.shape[-1],
+                            device=self.device,
+                            dtype=src_latent.dtype,
+                        )
+                        target_latent = torch.cat([src_latent, noise_latent], dim=0)
+                        target_latents_list.append(target_latent)
+                        latent_lengths.append(target_latent.shape[0])
+                        continue
 
                     current_wav = target_wavs_list[i].to(self.device).unsqueeze(0)
                     if self.is_silence(current_wav):

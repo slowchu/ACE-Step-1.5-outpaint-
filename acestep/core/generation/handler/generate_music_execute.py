@@ -91,6 +91,7 @@ class GenerateMusicExecuteMixin:
                     chunk_mask_modes=service_inputs.get("chunk_mask_modes_batch"),
                     repaint_crossfade_frames=repaint_crossfade_frames,
                     repaint_injection_ratio=repaint_injection_ratio,
+                    extend_specs=service_inputs.get("extend_specs_batch"),
                 )
             except Exception as exc:
                 _error["exc"] = exc
