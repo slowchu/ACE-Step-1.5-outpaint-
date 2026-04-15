@@ -296,6 +296,56 @@ class InitServiceWrapperDeviceResolutionTests(unittest.TestCase):
         _, call_kwargs = llm_handler.initialize.call_args
         self.assertEqual("pt", call_kwargs.get("backend"))
 
+    @patch("acestep.ui.gradio.events.generation.service_init.get_global_gpu_config")
+    @patch("acestep.ui.gradio.events.generation.service_init.get_checkpoints_dir")
+    def test_init_llm_uses_env_checkpoint_dir_when_dropdown_path_missing(
+        self,
+        mock_get_checkpoints_dir,
+        mock_gpu_config,
+    ):
+        """LLM init should use get_checkpoints_dir when dropdown path is not a directory."""
+        module = self._import_module()
+
+        mock_gpu_config.return_value = MagicMock(
+            available_lm_models=["acestep-5Hz-lm-1.7B"],
+            lm_backend_restriction=None,
+            tier="tier6",
+            gpu_memory_gb=24.0,
+            max_duration_with_lm=600,
+            max_duration_without_lm=600,
+            max_batch_size_with_lm=4,
+            max_batch_size_without_lm=8,
+        )
+        mock_get_checkpoints_dir.return_value = "/custom/checkpoints"
+
+        dit_handler = MagicMock()
+        dit_handler.initialize_service.return_value = ("ok", True)
+        dit_handler.model = MagicMock()
+        dit_handler.is_turbo_model.return_value = True
+
+        llm_handler = MagicMock()
+        llm_handler.llm_initialized = False
+        llm_handler.initialize.return_value = ("ok", True)
+
+        module.init_service_wrapper(
+            dit_handler,
+            llm_handler,
+            "acestep-v15-turbo",  # Dropdown may pass a model name, not a directory.
+            "acestep-v15-turbo",
+            "cuda",
+            True,
+            "acestep-5Hz-lm-1.7B",
+            "pt",
+            use_flash_attention=False,
+            offload_to_cpu=False,
+            offload_dit_to_cpu=False,
+            compile_model=False,
+            quantization=False,
+        )
+
+        _, call_kwargs = llm_handler.initialize.call_args
+        self.assertEqual("/custom/checkpoints", call_kwargs.get("checkpoint_dir"))
+
 
 
 class QuantizationSelectionTests(unittest.TestCase):

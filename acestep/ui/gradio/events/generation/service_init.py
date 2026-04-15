@@ -9,6 +9,7 @@ import sys
 import gradio as gr
 from loguru import logger
 
+from acestep.model_downloader import get_checkpoints_dir
 from acestep.ui.gradio.i18n import t
 from acestep.gpu_config import (
     get_global_gpu_config, is_lm_model_size_allowed, find_best_lm_model_on_disk,
@@ -16,6 +17,20 @@ from acestep.gpu_config import (
     resolve_lm_backend,
 )
 from .model_config import is_pure_base_model, is_sft_model, is_xl_model, get_model_type_ui_settings
+
+
+def _resolve_lm_checkpoint_dir(checkpoint: str | None, project_root: str) -> str:
+    """Resolve checkpoints directory used for LM initialization.
+
+    Uses the same logic as model loading so custom ``ACESTEP_CHECKPOINTS_DIR``
+    or a direct UI-selected checkpoints directory are honored consistently.
+    """
+    if checkpoint and os.path.isdir(checkpoint):
+        return checkpoint
+    try:
+        return str(get_checkpoints_dir())
+    except Exception:
+        return os.path.join(project_root, "checkpoints")
 
 
 def _select_quantization_value(
@@ -131,7 +146,8 @@ def init_service_wrapper(
     )
 
     if init_llm:
-        checkpoint_dir = os.path.join(project_root, "checkpoints")
+        checkpoint_dir = _resolve_lm_checkpoint_dir(checkpoint, project_root)
+        logger.info(f"Initializing 5Hz LM from checkpoints dir: {checkpoint_dir}")
 
         lm_status, lm_success = llm_handler.initialize(
             checkpoint_dir=checkpoint_dir,
