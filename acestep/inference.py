@@ -23,16 +23,6 @@ from acestep.constants import BPM_MIN, BPM_MAX, DURATION_MAX, TASK_TYPES, VALID_
 IS_HUGGINGFACE_SPACE = os.environ.get("SPACE_ID") is not None
 
 
-def _should_force_lm_codes(task_type: str, need_audio_codes: bool) -> bool:
-    """Return whether the task must run LM Phase 2 audio-code generation.
-
-    Extend/outpaint requires LM-generated semantic codes for the generated
-    region, even when the ``thinking`` toggle is off. Without codes, DiT only
-    receives text conditioning for the new frames and quality collapses.
-    """
-    return task_type == "extend" and need_audio_codes
-
-
 def _get_spaces_gpu_decorator(duration=180):
     """
     Get the @spaces.GPU decorator if running in HuggingFace Space environment.
@@ -400,7 +390,7 @@ def generate_music(
         # For now, we use "llm_dit" if batch mode or if user hasn't provided codes
         # Use "dit" if user has provided codes (only need metas) or if explicitly only need metas
         # Note: This logic can be refined based on specific requirements
-        need_audio_codes = not user_provided_audio_codes
+        need_audio_codes = (not user_provided_audio_codes) and params.task_type != "extend"
 
         if params.task_type == "extend":
             crop_t = max(0.0, float(params.crop_time))
@@ -452,7 +442,7 @@ def generate_music(
         # noise + text embeddings and produces gibberish.  Re-enable LM for extend so the
         # extension receives code-level conditioning.  If the LM turns out to fight the
         # DiT's in-context extension, gate it behind a flag rather than skipping outright.
-        skip_lm_tasks = {"cover", "repaint", "extract"}
+        skip_lm_tasks = {"cover", "repaint", "extract", "extend"}
         
         # Determine if we should use LLM
         # LLM is needed for:
@@ -461,9 +451,8 @@ def generate_music(
         # 3. use_cot_language=True: detect vocal language via CoT
         # 4. use_cot_metas=True: fill missing metadata via CoT
         need_lm_for_cot = params.use_cot_caption or params.use_cot_language or params.use_cot_metas
-        force_lm_codes = _should_force_lm_codes(params.task_type, need_audio_codes)
         use_lm = (
-            (params.thinking or need_lm_for_cot or force_lm_codes)
+            (params.thinking or need_lm_for_cot)
             and llm_handler is not None
             and llm_handler.llm_initialized
             and params.task_type not in skip_lm_tasks
