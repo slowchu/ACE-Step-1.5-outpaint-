@@ -108,9 +108,11 @@ class ConditioningTargetMixin:
                             if lm_latents.shape[0] > crop_latent_len:
                                 ext_latent = lm_latents[crop_latent_len:]
                             else:
-                                ext_latent = torch.randn(
-                                    ext_latent_len,
-                                    self.silence_latent.shape[-1],
+                                # Context latents condition the DiT through cross-attention;
+                                # they do not seed diffusion noise (xt is sampled separately).
+                                # For generation regions, repaint-style silence context is the
+                                # in-distribution "empty area to generate" signal.
+                                ext_latent = self._get_silence_latent_slice(ext_latent_len).to(
                                     device=self.device,
                                     dtype=src_latent.dtype,
                                 )
@@ -181,22 +183,22 @@ class ConditioningTargetMixin:
                                 dtype=self.silence_latent.dtype,
                             )
 
-                        # Use random-noise latents for the extension region so
-                        # the diffusion process is seeded with noise (not a
-                        # silence bias) over the generated span.
-                        noise_latent = torch.randn(
-                            ext_latent_len,
-                            self.silence_latent.shape[-1],
+                        # Context latents are cross-attention conditioning, not
+                        # diffusion initialization.  Use silence for the extend
+                        # region (same pattern as repaint) to indicate "empty
+                        # region to generate" while xt remains fresh Gaussian
+                        # noise inside the diffusion loop.
+                        ext_latent = self._get_silence_latent_slice(ext_latent_len).to(
                             device=self.device,
                             dtype=src_latent.dtype,
                         )
-                        target_latent = torch.cat([src_latent, noise_latent], dim=0)
+                        target_latent = torch.cat([src_latent, ext_latent], dim=0)
                         logger.info(
                             "[extend-trace][conditioning_target] item {}: "
-                            "src_latent.shape={} noise_latent.shape={} "
+                            "src_latent.shape={} ext_latent.shape={} "
                             "target_latent.shape={}",
                             i, tuple(src_latent.shape),
-                            tuple(noise_latent.shape),
+                            tuple(ext_latent.shape),
                             tuple(target_latent.shape),
                         )
                         target_latents_list.append(target_latent)

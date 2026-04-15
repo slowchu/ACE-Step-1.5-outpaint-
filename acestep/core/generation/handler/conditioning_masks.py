@@ -169,21 +169,15 @@ class ConditioningMaskMixin:
                     instruction_i = instructions[i] if instructions and i < len(instructions) else ""
                     is_lego = _LEGO_INSTRUCTION_MARKER in instruction_i.lower()
                     if i in extend_ranges:
-                        # Seed the extension region with random noise — never
-                        # VAE-encoded silence — so the model's context
-                        # conditioning is not biased toward fade-out silence
-                        # even though step-injection uses mask=True (no inject)
-                        # for this region.
-                        seg = torch.randn(
-                            end_latent - start_latent,
-                            src_latent.shape[-1],
-                            device=src_latent.device,
-                            dtype=src_latent.dtype,
-                        )
-                        src_latent[start_latent:end_latent] = seg
+                        # src_latents feed context_latents (cross-attention
+                        # conditioning), not diffusion initialization.
+                        # Diffusion still starts from fresh Gaussian xt, while
+                        # silence context in generation spans matches repaint's
+                        # in-distribution "empty region to generate" signal.
+                        src_latent[start_latent:end_latent] = silence_latent_tiled[start_latent:end_latent]
                         logger.info(
                             "[conditioning_masks] extend src_latent item {}: "
-                            "kept=[0:{}] noise-filled=[{}:{}] total={}",
+                            "kept=[0:{}] silence-filled=[{}:{}] total={}",
                             i, start_latent, start_latent, end_latent,
                             src_latent.shape[0],
                         )
