@@ -631,11 +631,11 @@ def generate_music(
             logger.info(f"[generate_music] Final inputs: dit_input_caption='{dit_input_caption}', dit_input_lyrics='{dit_input_lyrics}'")
 
         # Generate-time repaint/extend controls (can be overridden below).
-        generate_repainting_start = params.repainting_start
-        generate_repainting_end = params.repainting_end
-        generate_crop_time = params.crop_time
-        generate_extend_duration = params.extend_duration
-        generate_extend_overlap_seconds = params.extend_overlap_seconds
+        repainting_start_for_generate = params.repainting_start
+        repainting_end_for_generate = params.repainting_end
+        crop_time_for_generate = params.crop_time
+        extend_duration_for_generate = params.extend_duration
+        extend_overlap_seconds_for_generate = params.extend_overlap_seconds
 
         # Cover/repaint/lego/extract: duration is locked to the source audio
         # length.  Silently ignore whatever the caller passed — the handler
@@ -655,11 +655,11 @@ def generate_music(
             overlap_sec = min(extend_overlap_sec, crop_t)
             chunk_duration = overlap_sec + ext_d
             audio_duration = chunk_duration
-            generate_repainting_start = overlap_sec
-            generate_repainting_end = chunk_duration
-            generate_crop_time = crop_t
-            generate_extend_duration = ext_d
-            generate_extend_overlap_seconds = overlap_sec
+            repainting_start_for_generate = overlap_sec
+            repainting_end_for_generate = chunk_duration
+            crop_time_for_generate = crop_t
+            extend_duration_for_generate = ext_d
+            extend_overlap_seconds_for_generate = overlap_sec
             logger.info(
                 "[extend-trace][inference] params.crop_time={} params.extend_duration={} "
                 "params.extend_overlap_seconds={} params.repainting_start={} "
@@ -718,16 +718,16 @@ def generate_music(
             # prevent stale UI values from leaking into generation.
             "src_audio": None if params.task_type == "text2music" else generate_src_audio,
             "audio_code_string": audio_code_string_to_use,
-            "repainting_start": generate_repainting_start,
-            "repainting_end": generate_repainting_end,
+            "repainting_start": repainting_start_for_generate,
+            "repainting_end": repainting_end_for_generate,
             "chunk_mask_mode": params.chunk_mask_mode,
             "repaint_latent_crossfade_frames": params.repaint_latent_crossfade_frames,
             "repaint_wav_crossfade_sec": params.repaint_wav_crossfade_sec,
             "repaint_mode": params.repaint_mode,
             "repaint_strength": params.repaint_strength,
-            "crop_time": generate_crop_time,
-            "extend_duration": generate_extend_duration,
-            "extend_overlap_seconds": generate_extend_overlap_seconds,
+            "crop_time": crop_time_for_generate,
+            "extend_duration": extend_duration_for_generate,
+            "extend_overlap_seconds": extend_overlap_seconds_for_generate,
             "extend_seam_overlap_sec": params.extend_seam_overlap_sec,
             "instruction": params.instruction,
             "audio_cover_strength": params.audio_cover_strength,
