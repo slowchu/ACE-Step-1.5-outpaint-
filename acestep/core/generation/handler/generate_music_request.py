@@ -117,8 +117,15 @@ class GenerateMusicRequestMixin:
                 logger.info("[generate_music] text2music task does not use src_audio, ignoring")
         elif src_audio is not None:
             if self._has_non_empty_audio_codes(audio_code_string):
-                logger.info("[generate_music] Audio codes provided, ignoring src_audio and using codes instead")
-            else:
+                if task_type == "extend":
+                    logger.info(
+                        "[generate_music] Extend task with audio codes: keeping src_audio for "
+                        "context latents and using codes for extension conditioning"
+                    )
+                else:
+                    logger.info("[generate_music] Audio codes provided, ignoring src_audio and using codes instead")
+                    src_audio = None
+            if src_audio is not None:
                 logger.info("[generate_music] Processing source audio...")
                 processed_src_audio = self.process_src_audio(src_audio)
                 if processed_src_audio is None:
@@ -173,6 +180,7 @@ class GenerateMusicRequestMixin:
         chunk_mask_mode: str = "auto",
         crop_time: float = 0.0,
         extend_duration: float = 30.0,
+        extend_overlap_seconds: float = 6.0,
         extend_seam_overlap_sec: float = 0.5,
     ) -> Dict[str, Any]:
         """Prepare service inputs (batch text, repaint spans, and optional code hints)."""
@@ -195,10 +203,10 @@ class GenerateMusicRequestMixin:
         if is_extend_task:
             logger.info(
                 "[extend-trace][generate_music_request] task_type={} crop_time={} "
-                "extend_duration={} extend_seam_overlap_sec={} "
+                "extend_duration={} extend_overlap_seconds={} extend_seam_overlap_sec={} "
                 "repainting_start={} repainting_end={} audio_duration={} "
                 "src_audio_present={} actual_batch_size={}",
-                task_type, crop_time, extend_duration, extend_seam_overlap_sec,
+                task_type, crop_time, extend_duration, extend_overlap_seconds, extend_seam_overlap_sec,
                 repainting_start, repainting_end, audio_duration,
                 processed_src_audio is not None, actual_batch_size,
             )
@@ -232,6 +240,7 @@ class GenerateMusicRequestMixin:
             extend_specs_batch = [
                 {
                     "crop_time": float(crop_time),
+                    "overlap_sec": float(repainting_start),
                     "extend_duration": float(extend_duration),
                     "seam_overlap_sec": float(extend_seam_overlap_sec),
                 }
@@ -260,4 +269,3 @@ class GenerateMusicRequestMixin:
             "extend_specs_batch": extend_specs_batch,
             "should_return_intermediate": True,
         }
-

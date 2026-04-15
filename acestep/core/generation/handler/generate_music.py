@@ -23,6 +23,48 @@ from acestep.gpu_config import (
 )
 
 
+def _build_extend_chunk_output(
+    original_source: torch.Tensor,
+    generated_chunk: torch.Tensor,
+    sample_rate: int,
+    original_crop_time: float,
+    overlap_sec: float,
+) -> torch.Tensor:
+    """Assemble final extend output from original source and generated chunk.
+
+    The generated chunk has shape ``[channels, overlap+extend]`` where the
+    first ``overlap`` seconds correspond to source-tail context.
+    """
+    crop_samples = max(0, int(float(original_crop_time) * sample_rate))
+    overlap_samples = max(0, int(float(overlap_sec) * sample_rate))
+    orig_len = original_source.shape[-1]
+    crop_samples = min(crop_samples, orig_len)
+
+    original_kept = original_source[..., :crop_samples]
+    generated_overlap = generated_chunk[..., :overlap_samples]
+    generated_extension = generated_chunk[..., overlap_samples:]
+
+    if overlap_samples <= 0:
+        return torch.cat([original_kept, generated_extension], dim=-1)
+
+    overlap_samples = min(overlap_samples, original_kept.shape[-1], generated_overlap.shape[-1])
+    if overlap_samples <= 0:
+        return torch.cat([original_kept, generated_extension], dim=-1)
+
+    overlap_source = original_kept[..., -overlap_samples:]
+    prefix_without_overlap = original_kept[..., :-overlap_samples]
+
+    fade = torch.linspace(
+        0.0,
+        1.0,
+        overlap_samples,
+        device=generated_chunk.device,
+        dtype=generated_chunk.dtype,
+    ).unsqueeze(0)
+    crossfaded = overlap_source * (1.0 - fade) + generated_overlap[..., :overlap_samples] * fade
+    return torch.cat([prefix_without_overlap, crossfaded, generated_extension], dim=-1)
+
+
 def _resolve_repaint_config(
     mode: str = "balanced",
     strength: float = 0.5,
@@ -220,6 +262,7 @@ class GenerateMusicMixin:
         repaint_strength: float = 0.5,
         crop_time: float = 0.0,
         extend_duration: float = 30.0,
+        extend_overlap_seconds: float = 6.0,
         extend_seam_overlap_sec: float = 0.5,
         progress=None,
     ) -> Dict[str, Any]:
@@ -314,8 +357,7 @@ class GenerateMusicMixin:
                 audio_duration = processed_src_audio.shape[-1] / self.sample_rate
 
             # Extend: clamp crop_time to the actual source length, then set the
-            # total duration = crop + extend_duration.  extend_duration must be
-            # positive or there is nothing to generate.
+            # chunk duration = overlap + extend_duration.
             if task_type == "extend":
                 src_len_sec = (
                     processed_src_audio.shape[-1] / self.sample_rate
@@ -329,23 +371,39 @@ class GenerateMusicMixin:
                 )
                 clamped_crop = max(0.0, min(float(crop_time), src_len_sec))
                 ext_d = max(0.1, float(extend_duration))
+                overlap_cap = min(30.0, clamped_crop) if clamped_crop > 0 else 1.0
+                overlap_requested = max(1.0, float(extend_overlap_seconds))
+                overlap_sec = min(overlap_requested, overlap_cap, clamped_crop)
                 if clamped_crop != crop_time:
                     logger.info(
                         "[generate_music] extend: clamping crop_time {:.3f}s to [0, {:.3f}s]",
                         float(crop_time), src_len_sec,
                     )
+                original_src_audio_for_stitch = processed_src_audio
+                overlap_samples = int(overlap_sec * self.sample_rate)
+                if processed_src_audio is not None and overlap_samples > 0:
+                    processed_src_audio = processed_src_audio[..., -overlap_samples:]
                 crop_time = clamped_crop
                 extend_duration = ext_d
-                audio_duration = crop_time + extend_duration
-                # repainting span covers the generated tail.
-                repainting_start = crop_time
-                repainting_end = crop_time + extend_duration
+                audio_duration = overlap_sec + extend_duration
+                # repainting span covers the generated tail within chunk coords.
+                repainting_start = overlap_sec
+                repainting_end = overlap_sec + extend_duration
+                logger.info(
+                    "[extend-trace] Chunk-based extend: source_len={}s original_crop={}s "
+                    "overlap={}s extend={}s chunk_total={}s",
+                    round(src_len_sec, 4), round(crop_time, 4), round(overlap_sec, 4),
+                    round(extend_duration, 4), round(audio_duration, 4),
+                )
                 logger.info(
                     "[extend-trace][generate_music] resolved crop_time={:.3f}s extend_duration={:.3f}s "
-                    "audio_duration={:.3f}s repainting_start={:.3f}s repainting_end={:.3f}s",
-                    crop_time, extend_duration, audio_duration,
+                    "overlap={:.3f}s audio_duration={:.3f}s repainting_start={:.3f}s repainting_end={:.3f}s",
+                    crop_time, extend_duration, overlap_sec, audio_duration,
                     repainting_start, repainting_end,
                 )
+            else:
+                overlap_sec = 0.0
+                original_src_audio_for_stitch = None
 
             service_inputs = self._prepare_generate_music_service_inputs(
                 actual_batch_size=actual_batch_size,
@@ -366,6 +424,7 @@ class GenerateMusicMixin:
                 chunk_mask_mode=chunk_mask_mode,
                 crop_time=crop_time,
                 extend_duration=extend_duration,
+                extend_overlap_seconds=extend_overlap_seconds,
                 extend_seam_overlap_sec=extend_seam_overlap_sec,
             )
             vram_error = self._vram_preflight_check(
@@ -442,7 +501,27 @@ class GenerateMusicMixin:
                     tuple(pred_wavs.shape) if pred_wavs is not None else None,
                     tuple(service_inputs["target_wavs_tensor"].shape),
                 )
-            if do_wav_splice:
+            if task_type == "extend" and original_src_audio_for_stitch is not None:
+                stitched_wavs = []
+                for i in range(pred_wavs.shape[0]):
+                    stitched = _build_extend_chunk_output(
+                        original_source=original_src_audio_for_stitch,
+                        generated_chunk=pred_wavs[i],
+                        sample_rate=self.sample_rate,
+                        original_crop_time=crop_time,
+                        overlap_sec=overlap_sec,
+                    )
+                    stitched_wavs.append(stitched)
+                max_samples = max(w.shape[-1] for w in stitched_wavs)
+                pred_wavs = torch.stack(
+                    [
+                        torch.nn.functional.pad(w, (0, max_samples - w.shape[-1]), "constant", 0)
+                        if w.shape[-1] < max_samples else w
+                        for w in stitched_wavs
+                    ],
+                    dim=0,
+                )
+            elif do_wav_splice:
                 # For extend we always want the kept region restored from the
                 # original source and a small wav-level crossfade at the seam
                 # so any residual VAE reconstruction drift doesn't cause a

@@ -89,6 +89,7 @@ def register_generation_run_handlers(context: GenerationWiringContext) -> None:
             generation_section["sampler_mode"],
             generation_section["velocity_norm_threshold"],
             generation_section["velocity_ema_factor"],
+            generation_section["extend_overlap_seconds"],
             generation_section["custom_timesteps"],
             generation_section["audio_format"],
             generation_section["mp3_bitrate"],
