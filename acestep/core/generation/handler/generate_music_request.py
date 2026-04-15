@@ -117,8 +117,15 @@ class GenerateMusicRequestMixin:
                 logger.info("[generate_music] text2music task does not use src_audio, ignoring")
         elif src_audio is not None:
             if self._has_non_empty_audio_codes(audio_code_string):
-                logger.info("[generate_music] Audio codes provided, ignoring src_audio and using codes instead")
-            else:
+                if task_type == "extend":
+                    logger.info(
+                        "[generate_music] Extend task with audio codes: keeping src_audio for "
+                        "context latents and using codes for extension conditioning"
+                    )
+                else:
+                    logger.info("[generate_music] Audio codes provided, ignoring src_audio and using codes instead")
+                    src_audio = None
+            if src_audio is not None:
                 logger.info("[generate_music] Processing source audio...")
                 processed_src_audio = self.process_src_audio(src_audio)
                 if processed_src_audio is None:
@@ -260,4 +267,3 @@ class GenerateMusicRequestMixin:
             "extend_specs_batch": extend_specs_batch,
             "should_return_intermediate": True,
         }
-
