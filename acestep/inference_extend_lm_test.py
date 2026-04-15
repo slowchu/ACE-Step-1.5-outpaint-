@@ -42,7 +42,9 @@ class ExtendLmInferenceTests(unittest.TestCase):
             src_audio="dummy.wav",
             caption="extend this music",
             lyrics="[Instrumental]",
-            duration=28.0,
+            duration=155.0,
+            crop_time=1.0,
+            extend_duration=28.0,
         )
         config = GenerationConfig(batch_size=1, allow_lm_batch=False)
 
@@ -52,6 +54,8 @@ class ExtendLmInferenceTests(unittest.TestCase):
         llm_handler.generate_with_stop_condition.assert_called_once()
         _, call_kwargs = llm_handler.generate_with_stop_condition.call_args
         self.assertEqual("llm_dit", call_kwargs.get("infer_type"))
+        self.assertEqual(29.0, call_kwargs.get("target_duration"))
+        self.assertEqual(29, call_kwargs.get("user_metadata", {}).get("duration"))
 
     def test_force_lm_codes_only_for_extend_without_user_codes(self):
         """Only extend tasks without user codes should force LM code generation."""

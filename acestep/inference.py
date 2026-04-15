@@ -387,6 +387,7 @@ def generate_music(
         key_scale = params.keyscale
         time_signature = params.timesignature
         audio_duration = params.duration
+        lm_target_duration = audio_duration
         dit_input_caption = params.caption
         dit_input_vocal_language = params.vocal_language
         dit_input_lyrics = params.lyrics
@@ -400,6 +401,18 @@ def generate_music(
         # Use "dit" if user has provided codes (only need metas) or if explicitly only need metas
         # Note: This logic can be refined based on specific requirements
         need_audio_codes = not user_provided_audio_codes
+
+        if params.task_type == "extend":
+            crop_t = max(0.0, float(params.crop_time))
+            ext_d = max(0.1, float(params.extend_duration))
+            lm_target_duration = crop_t + ext_d
+            logger.info(
+                "[extend-trace][inference] LM target duration override: "
+                "crop_time={} extend_duration={} -> {:.3f}s",
+                params.crop_time,
+                params.extend_duration,
+                lm_target_duration,
+            )
 
         # Determine if we should use chunk-based LM generation (always use chunks for consistency)
         # Determine actual batch size for chunk processing
@@ -491,9 +504,9 @@ def generate_music(
                 if time_sig_clean.lower() not in ["n/a", ""]:
                     user_metadata['timesignature'] = time_sig_clean
 
-            if audio_duration is not None:
+            if lm_target_duration is not None:
                 try:
-                    duration_value = float(audio_duration)
+                    duration_value = float(lm_target_duration)
                     if duration_value > 0:
                         user_metadata['duration'] = int(duration_value)
                 except (ValueError, TypeError):
@@ -534,7 +547,7 @@ def generate_music(
                     negative_prompt=params.lm_negative_prompt,
                     top_k=top_k_value,
                     top_p=top_p_value,
-                    target_duration=audio_duration,  # Pass duration to limit audio codes generation
+                    target_duration=lm_target_duration,  # Keep extend LM codes aligned to crop+extend duration.
                     user_metadata=user_metadata_to_pass,
                     use_cot_caption=params.use_cot_caption,
                     use_cot_language=params.use_cot_language,
