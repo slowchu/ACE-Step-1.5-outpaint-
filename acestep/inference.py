@@ -650,6 +650,32 @@ def generate_music(
                 crop_t, ext_d, audio_duration,
             )
 
+            if params.src_audio:
+                from acestep.audio_analysis import analyze_source_audio
+
+                src_meta = analyze_source_audio(params.src_audio, sample_rate=48000)
+
+                bpm_missing = params.bpm is None
+                key_missing = not params.keyscale or params.keyscale.strip().lower() in {"n/a", "none"}
+                ts_missing = not params.timesignature or params.timesignature.strip().lower() in {"n/a", "none"}
+
+                if src_meta.get("bpm") and bpm_missing:
+                    params.bpm = int(src_meta["bpm"])
+                    bpm = params.bpm
+                if src_meta.get("keyscale") and key_missing:
+                    params.keyscale = src_meta["keyscale"]
+                    key_scale = params.keyscale
+                if src_meta.get("timesignature") and ts_missing:
+                    params.timesignature = str(src_meta["timesignature"])
+                    time_signature = params.timesignature
+
+                logger.info(
+                    "[extend-trace] Source audio analysis: bpm={} key={} timesig={}",
+                    src_meta.get("bpm"),
+                    src_meta.get("keyscale"),
+                    src_meta.get("timesignature"),
+                )
+
         # Phase 2: DiT music generation
         # Use seed_for_generation (from config.seed or params.seed) instead of params.seed for actual generation
         dit_generate_kwargs = {
