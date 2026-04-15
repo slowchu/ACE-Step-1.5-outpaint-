@@ -156,10 +156,13 @@ class GenerationParams:
     # Extend (audio outpaint) parameters — only used when task_type == "extend".
     # crop_time: seconds from the start of src_audio that are preserved exactly.
     # extend_duration: seconds of genuinely new audio to generate after the crop.
+    # extend_overlap_seconds: amount of source tail (context) provided to DiT;
+    #   extension generation runs on [overlap + extend_duration] chunk only.
     # extend_seam_overlap_sec: duration over which the boundary mask ramps 0→1
     #   so the seam between kept and generated audio is not abrupt (~0.5-1.0s).
     crop_time: float = 0.0
     extend_duration: float = 30.0
+    extend_overlap_seconds: float = 6.0
     extend_seam_overlap_sec: float = 0.5
 
     # 5Hz Language Model Parameters
@@ -627,6 +630,14 @@ def generate_music(
             logger.info(f"[generate_music] {params.task_type} task: using params.caption='{params.caption}', params.lyrics='{params.lyrics}'")
             logger.info(f"[generate_music] Final inputs: dit_input_caption='{dit_input_caption}', dit_input_lyrics='{dit_input_lyrics}'")
 
+        # Generate-time repaint/extend controls (can be overridden below).
+        generate_repainting_start = params.repainting_start
+        generate_repainting_end = params.repainting_end
+        generate_crop_time = params.crop_time
+        generate_extend_duration = params.extend_duration
+        generate_extend_overlap_seconds = params.extend_overlap_seconds
+        generate_src_audio = params.src_audio
+
         # Cover/repaint/lego/extract: duration is locked to the source audio
         # length.  Silently ignore whatever the caller passed — the handler
         # will set audio_duration from the loaded waveform.
@@ -635,22 +646,33 @@ def generate_music(
         if params.task_type in ("cover", "repaint", "lego", "extract"):
             audio_duration = None
         elif params.task_type == "extend":
-            # Total output length for extend = kept portion + newly generated.
-            # Pass it explicitly so the handler does not fall back to the
-            # padded-to-source-duration default.
+            # Chunk-based extend: DiT sees only [overlap + extension] seconds.
+            # Final [0:crop_time] preservation and stitching is done in handler.
             crop_t = max(0.0, float(params.crop_time))
             ext_d = max(0.1, float(params.extend_duration))
-            audio_duration = crop_t + ext_d
+            overlap_limit = min(30.0, crop_t) if crop_t > 0 else 1.0
+            overlap_cfg = max(1.0, float(params.extend_overlap_seconds))
+            extend_overlap_sec = min(overlap_cfg, overlap_limit)
+            overlap_sec = min(extend_overlap_sec, crop_t)
+            chunk_duration = overlap_sec + ext_d
+            audio_duration = chunk_duration
+            generate_repainting_start = overlap_sec
+            generate_repainting_end = chunk_duration
+            generate_crop_time = crop_t
+            generate_extend_duration = ext_d
+            generate_extend_overlap_seconds = overlap_sec
             logger.info(
                 "[extend-trace][inference] params.crop_time={} params.extend_duration={} "
-                "params.repainting_start={} params.repainting_end={} "
-                "-> clamped crop_t={:.3f}s ext_d={:.3f}s audio_duration={:.3f}s",
+                "params.extend_overlap_seconds={} params.repainting_start={} "
+                "params.repainting_end={} -> clamped crop_t={:.3f}s ext_d={:.3f}s "
+                "overlap={:.3f}s chunk_duration={:.3f}s",
                 params.crop_time, params.extend_duration,
+                params.extend_overlap_seconds,
                 params.repainting_start, params.repainting_end,
-                crop_t, ext_d, audio_duration,
+                crop_t, ext_d, overlap_sec, chunk_duration,
             )
 
-            if params.src_audio:
+            if params.src_audio is not None:
                 from acestep.audio_analysis import analyze_source_audio
 
                 src_meta = analyze_source_audio(params.src_audio, sample_rate=48000)
@@ -676,6 +698,39 @@ def generate_music(
                     src_meta.get("timesignature"),
                 )
 
+                try:
+                    if isinstance(params.src_audio, torch.Tensor):
+                        src_wav = params.src_audio
+                        if src_wav.dim() == 1:
+                            src_wav = src_wav.unsqueeze(0)
+                        if src_wav.shape[0] == 1:
+                            src_wav = src_wav.repeat(2, 1)
+                    else:
+                        import torchaudio
+
+                        src_wav, src_sr = torchaudio.load(params.src_audio)
+                        if src_wav.shape[0] == 1:
+                            src_wav = src_wav.repeat(2, 1)
+                        if src_sr != 48000:
+                            src_wav = torchaudio.functional.resample(src_wav, src_sr, 48000)
+                    src_len = src_wav.shape[-1] / 48000.0
+                    overlap_samples = int(overlap_sec * 48000)
+                    if overlap_samples > 0:
+                        generate_src_audio = src_wav[..., -overlap_samples:]
+                    else:
+                        generate_src_audio = src_wav[..., :0]
+                    logger.info(
+                        "[extend-trace] Chunk-based extend: source_len={}s original_crop={}s "
+                        "overlap={}s extend={}s chunk_total={}s",
+                        round(src_len, 4), round(crop_t, 4), round(overlap_sec, 4),
+                        round(ext_d, 4), round(chunk_duration, 4),
+                    )
+                except (ImportError, OSError, RuntimeError, ValueError):
+                    logger.exception(
+                        "[extend-trace] Failed to pre-crop extend source audio to overlap tail; "
+                        "falling back to handler-side processing"
+                    )
+
         # Phase 2: DiT music generation
         # Use seed_for_generation (from config.seed or params.seed) instead of params.seed for actual generation
         dit_generate_kwargs = {
@@ -695,17 +750,18 @@ def generate_music(
             "batch_size": config.batch_size if config.batch_size is not None else 1,
             # text2music (Custom mode) never uses src_audio; force None to
             # prevent stale UI values from leaking into generation.
-            "src_audio": None if params.task_type == "text2music" else params.src_audio,
+            "src_audio": None if params.task_type == "text2music" else generate_src_audio,
             "audio_code_string": audio_code_string_to_use,
-            "repainting_start": params.repainting_start,
-            "repainting_end": params.repainting_end,
+            "repainting_start": generate_repainting_start,
+            "repainting_end": generate_repainting_end,
             "chunk_mask_mode": params.chunk_mask_mode,
             "repaint_latent_crossfade_frames": params.repaint_latent_crossfade_frames,
             "repaint_wav_crossfade_sec": params.repaint_wav_crossfade_sec,
             "repaint_mode": params.repaint_mode,
             "repaint_strength": params.repaint_strength,
-            "crop_time": params.crop_time,
-            "extend_duration": params.extend_duration,
+            "crop_time": generate_crop_time,
+            "extend_duration": generate_extend_duration,
+            "extend_overlap_seconds": generate_extend_overlap_seconds,
             "extend_seam_overlap_sec": params.extend_seam_overlap_sec,
             "instruction": params.instruction,
             "audio_cover_strength": params.audio_cover_strength,

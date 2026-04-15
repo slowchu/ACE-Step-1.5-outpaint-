@@ -180,6 +180,7 @@ class GenerateMusicRequestMixin:
         chunk_mask_mode: str = "auto",
         crop_time: float = 0.0,
         extend_duration: float = 30.0,
+        extend_overlap_seconds: float = 6.0,
         extend_seam_overlap_sec: float = 0.5,
     ) -> Dict[str, Any]:
         """Prepare service inputs (batch text, repaint spans, and optional code hints)."""
@@ -202,10 +203,10 @@ class GenerateMusicRequestMixin:
         if is_extend_task:
             logger.info(
                 "[extend-trace][generate_music_request] task_type={} crop_time={} "
-                "extend_duration={} extend_seam_overlap_sec={} "
+                "extend_duration={} extend_overlap_seconds={} extend_seam_overlap_sec={} "
                 "repainting_start={} repainting_end={} audio_duration={} "
                 "src_audio_present={} actual_batch_size={}",
-                task_type, crop_time, extend_duration, extend_seam_overlap_sec,
+                task_type, crop_time, extend_duration, extend_overlap_seconds, extend_seam_overlap_sec,
                 repainting_start, repainting_end, audio_duration,
                 processed_src_audio is not None, actual_batch_size,
             )
@@ -239,6 +240,7 @@ class GenerateMusicRequestMixin:
             extend_specs_batch = [
                 {
                     "crop_time": float(crop_time),
+                    "overlap_sec": float(repainting_start),
                     "extend_duration": float(extend_duration),
                     "seam_overlap_sec": float(extend_seam_overlap_sec),
                 }

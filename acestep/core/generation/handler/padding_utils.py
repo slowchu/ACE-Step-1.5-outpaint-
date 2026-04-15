@@ -28,9 +28,9 @@ class PaddingMixin:
     ):
         """Prepare padded target wavs and repaint coordinates for each batch item.
 
-        Extend task: crop ``processed_src_audio`` at ``crop_time`` seconds and
-        right-pad with zeros for ``extend_duration`` seconds.  Repaint span is
-        set to ``[crop_time, crop_time + extend_duration]`` so the downstream
+        Extend task: ``processed_src_audio`` already contains only the overlap
+        tail context. Right-pad it with zeros for ``extend_duration`` seconds.
+        Repaint span is set to ``[overlap, overlap + extend_duration]`` so downstream
         mask/latent builders treat the tail as the generated region.
         """
         try:
@@ -40,25 +40,22 @@ class PaddingMixin:
             for i in range(actual_batch_size):
                 if processed_src_audio is not None:
                     if is_extend_task:
-                        # Extend task: crop source at crop_time and right-pad
-                        # with zeros for the extension region.  The extension
+                        # Extend task: source is already the overlap-tail chunk.
+                        # Right-pad with zeros for the extension region.  The extension
                         # region in `target_wavs` is just a placeholder; the
                         # real random-noise seed is injected at the latent
                         # level by the target/mask builders.
-                        src_len = processed_src_audio.shape[-1]
-                        crop_samples = int(max(0.0, float(crop_time)) * 48000)
-                        crop_samples = min(crop_samples, src_len)
+                        overlap_samples = processed_src_audio.shape[-1]
                         ext_samples = int(max(0.1, float(extend_duration)) * 48000)
-                        cropped = processed_src_audio[..., :crop_samples]
                         batch_target_wavs = torch.nn.functional.pad(
-                            cropped, (0, ext_samples), "constant", 0
+                            processed_src_audio, (0, ext_samples), "constant", 0
                         )
                         logger.info(
                             "[extend-trace][padding_utils] item {}: src_len={} "
-                            "crop_time={}s -> crop_samples={} "
+                            "overlap_samples={} (~{}s) "
                             "extend_duration={}s -> ext_samples={} "
                             "target_wavs.shape={}",
-                            i, src_len, crop_time, crop_samples,
+                            i, processed_src_audio.shape[-1], overlap_samples, overlap_samples / 48000.0,
                             extend_duration, ext_samples,
                             tuple(batch_target_wavs.shape),
                         )
