@@ -636,7 +636,6 @@ def generate_music(
         generate_crop_time = params.crop_time
         generate_extend_duration = params.extend_duration
         generate_extend_overlap_seconds = params.extend_overlap_seconds
-        generate_src_audio = params.src_audio
 
         # Cover/repaint/lego/extract: duration is locked to the source audio
         # length.  Silently ignore whatever the caller passed — the handler
@@ -697,39 +696,6 @@ def generate_music(
                     src_meta.get("keyscale"),
                     src_meta.get("timesignature"),
                 )
-
-                try:
-                    if isinstance(params.src_audio, torch.Tensor):
-                        src_wav = params.src_audio
-                        if src_wav.dim() == 1:
-                            src_wav = src_wav.unsqueeze(0)
-                        if src_wav.shape[0] == 1:
-                            src_wav = src_wav.repeat(2, 1)
-                    else:
-                        import torchaudio
-
-                        src_wav, src_sr = torchaudio.load(params.src_audio)
-                        if src_wav.shape[0] == 1:
-                            src_wav = src_wav.repeat(2, 1)
-                        if src_sr != 48000:
-                            src_wav = torchaudio.functional.resample(src_wav, src_sr, 48000)
-                    src_len = src_wav.shape[-1] / 48000.0
-                    overlap_samples = int(overlap_sec * 48000)
-                    if overlap_samples > 0:
-                        generate_src_audio = src_wav[..., -overlap_samples:]
-                    else:
-                        generate_src_audio = src_wav[..., :0]
-                    logger.info(
-                        "[extend-trace] Chunk-based extend: source_len={}s original_crop={}s "
-                        "overlap={}s extend={}s chunk_total={}s",
-                        round(src_len, 4), round(crop_t, 4), round(overlap_sec, 4),
-                        round(ext_d, 4), round(chunk_duration, 4),
-                    )
-                except (ImportError, OSError, RuntimeError, ValueError):
-                    logger.exception(
-                        "[extend-trace] Failed to pre-crop extend source audio to overlap tail; "
-                        "falling back to handler-side processing"
-                    )
 
         # Phase 2: DiT music generation
         # Use seed_for_generation (from config.seed or params.seed) instead of params.seed for actual generation

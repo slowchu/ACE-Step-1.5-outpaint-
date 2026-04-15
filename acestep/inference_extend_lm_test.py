@@ -146,8 +146,8 @@ class ExtendLmInferenceTests(unittest.TestCase):
         self.assertEqual("B minor", dit_handler.kwargs.get("key_scale"))
         self.assertEqual("4", dit_handler.kwargs.get("time_signature"))
 
-    def test_extend_uses_chunk_duration_and_tail_overlap_context(self):
-        """Extend should pass overlap+extend duration and overlap-tail src audio."""
+    def test_extend_uses_chunk_duration_and_preserves_src_audio_for_handler(self):
+        """Extend should pass chunk timings while leaving src_audio unchanged."""
 
         class _CaptureDiTHandler:
             def __init__(self):
@@ -209,8 +209,8 @@ class ExtendLmInferenceTests(unittest.TestCase):
         self.assertEqual(6.0, dit_handler.kwargs.get("repainting_start"))
         self.assertEqual(21.0, dit_handler.kwargs.get("repainting_end"))
         self.assertEqual(6.0, dit_handler.kwargs.get("extend_overlap_seconds"))
-        sliced_src_audio = dit_handler.kwargs.get("src_audio")
-        self.assertEqual(int(6.0 * 48000), sliced_src_audio.shape[-1])
+        forwarded_src_audio = dit_handler.kwargs.get("src_audio")
+        self.assertIs(forwarded_src_audio, src_audio_tensor)
 
 
 if __name__ == "__main__":
