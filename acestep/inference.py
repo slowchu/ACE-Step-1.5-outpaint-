@@ -22,6 +22,17 @@ from acestep.constants import BPM_MIN, BPM_MAX, DURATION_MAX, TASK_TYPES, VALID_
 # HuggingFace Space environment detection
 IS_HUGGINGFACE_SPACE = os.environ.get("SPACE_ID") is not None
 
+
+def _should_force_lm_codes(task_type: str, need_audio_codes: bool) -> bool:
+    """Return whether the task must run LM Phase 2 audio-code generation.
+
+    Extend/outpaint requires LM-generated semantic codes for the generated
+    region, even when the ``thinking`` toggle is off. Without codes, DiT only
+    receives text conditioning for the new frames and quality collapses.
+    """
+    return task_type == "extend" and need_audio_codes
+
+
 def _get_spaces_gpu_decorator(duration=180):
     """
     Get the @spaces.GPU decorator if running in HuggingFace Space environment.
@@ -437,7 +448,13 @@ def generate_music(
         # 3. use_cot_language=True: detect vocal language via CoT
         # 4. use_cot_metas=True: fill missing metadata via CoT
         need_lm_for_cot = params.use_cot_caption or params.use_cot_language or params.use_cot_metas
-        use_lm = (params.thinking or need_lm_for_cot) and llm_handler is not None and llm_handler.llm_initialized and params.task_type not in skip_lm_tasks
+        force_lm_codes = _should_force_lm_codes(params.task_type, need_audio_codes)
+        use_lm = (
+            (params.thinking or need_lm_for_cot or force_lm_codes)
+            and llm_handler is not None
+            and llm_handler.llm_initialized
+            and params.task_type not in skip_lm_tasks
+        )
         lm_status = []
         
         if params.task_type in skip_lm_tasks:
@@ -446,6 +463,7 @@ def generate_music(
         logger.info(f"[generate_music] LLM usage decision: thinking={params.thinking}, "
                    f"use_cot_caption={params.use_cot_caption}, use_cot_language={params.use_cot_language}, "
                    f"use_cot_metas={params.use_cot_metas}, need_lm_for_cot={need_lm_for_cot}, "
+                   f"force_lm_codes={force_lm_codes}, "
                    f"llm_initialized={llm_handler.llm_initialized if llm_handler else False}, use_lm={use_lm}")
         
         if use_lm:
@@ -486,7 +504,7 @@ def generate_music(
             # Determine infer_type based on whether we need audio codes
             # - "llm_dit": generates both metas and audio codes (two-phase internally)
             # - "dit": generates only metas (single phase)
-            infer_type = "llm_dit" if need_audio_codes and params.thinking else "dit"
+            infer_type = "llm_dit" if need_audio_codes and (params.thinking or force_lm_codes) else "dit"
 
             # Use chunk size from config, or default to batch_size if not set
             max_inference_batch_size = int(config.lm_batch_chunk_size) if config.lm_batch_chunk_size > 0 else actual_batch_size
