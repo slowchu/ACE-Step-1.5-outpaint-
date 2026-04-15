@@ -392,18 +392,6 @@ def generate_music(
         # Note: This logic can be refined based on specific requirements
         need_audio_codes = (not user_provided_audio_codes) and params.task_type != "extend"
 
-        if params.task_type == "extend":
-            crop_t = max(0.0, float(params.crop_time))
-            ext_d = max(0.1, float(params.extend_duration))
-            lm_target_duration = crop_t + ext_d
-            logger.info(
-                "[extend-trace][inference] LM target duration override: "
-                "crop_time={} extend_duration={} -> {:.3f}s",
-                params.crop_time,
-                params.extend_duration,
-                lm_target_duration,
-            )
-
         # Determine if we should use chunk-based LM generation (always use chunks for consistency)
         # Determine actual batch size for chunk processing
         actual_batch_size = config.batch_size if config.batch_size is not None else 1
@@ -451,6 +439,7 @@ def generate_music(
         # 3. use_cot_language=True: detect vocal language via CoT
         # 4. use_cot_metas=True: fill missing metadata via CoT
         need_lm_for_cot = params.use_cot_caption or params.use_cot_language or params.use_cot_metas
+        force_lm_codes = False
         use_lm = (
             (params.thinking or need_lm_for_cot)
             and llm_handler is not None
