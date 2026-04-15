@@ -22,6 +22,7 @@ from acestep.constants import BPM_MIN, BPM_MAX, DURATION_MAX, TASK_TYPES, VALID_
 # HuggingFace Space environment detection
 IS_HUGGINGFACE_SPACE = os.environ.get("SPACE_ID") is not None
 
+
 def _get_spaces_gpu_decorator(duration=180):
     """
     Get the @spaces.GPU decorator if running in HuggingFace Space environment.
@@ -388,7 +389,7 @@ def generate_music(
         # For now, we use "llm_dit" if batch mode or if user hasn't provided codes
         # Use "dit" if user has provided codes (only need metas) or if explicitly only need metas
         # Note: This logic can be refined based on specific requirements
-        need_audio_codes = not user_provided_audio_codes
+        need_audio_codes = (not user_provided_audio_codes) and params.task_type != "extend"
 
         # Determine if we should use chunk-based LM generation (always use chunks for consistency)
         # Determine actual batch size for chunk processing
@@ -428,7 +429,7 @@ def generate_music(
         # noise + text embeddings and produces gibberish.  Re-enable LM for extend so the
         # extension receives code-level conditioning.  If the LM turns out to fight the
         # DiT's in-context extension, gate it behind a flag rather than skipping outright.
-        skip_lm_tasks = {"cover", "repaint", "extract"}
+        skip_lm_tasks = {"cover", "repaint", "extract", "extend"}
         
         # Determine if we should use LLM
         # LLM is needed for:
@@ -437,7 +438,13 @@ def generate_music(
         # 3. use_cot_language=True: detect vocal language via CoT
         # 4. use_cot_metas=True: fill missing metadata via CoT
         need_lm_for_cot = params.use_cot_caption or params.use_cot_language or params.use_cot_metas
-        use_lm = (params.thinking or need_lm_for_cot) and llm_handler is not None and llm_handler.llm_initialized and params.task_type not in skip_lm_tasks
+        force_lm_codes = False
+        use_lm = (
+            (params.thinking or need_lm_for_cot)
+            and llm_handler is not None
+            and llm_handler.llm_initialized
+            and params.task_type not in skip_lm_tasks
+        )
         lm_status = []
         
         if params.task_type in skip_lm_tasks:
@@ -446,6 +453,7 @@ def generate_music(
         logger.info(f"[generate_music] LLM usage decision: thinking={params.thinking}, "
                    f"use_cot_caption={params.use_cot_caption}, use_cot_language={params.use_cot_language}, "
                    f"use_cot_metas={params.use_cot_metas}, need_lm_for_cot={need_lm_for_cot}, "
+                   f"force_lm_codes={force_lm_codes}, "
                    f"llm_initialized={llm_handler.llm_initialized if llm_handler else False}, use_lm={use_lm}")
         
         if use_lm:

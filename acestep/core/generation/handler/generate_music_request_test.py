@@ -152,6 +152,27 @@ class GenerateMusicRequestMixinTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertIsNone(processed_src_audio)
 
+    def test_extend_with_codes_keeps_and_processes_src_audio(self):
+        """Extend should keep src_audio even when audio codes are provided."""
+        host = _Host()
+        called = {"process_src_audio": False}
+
+        def _process_src_audio(_src):
+            called["process_src_audio"] = True
+            return torch.ones(2, 100)
+
+        host.process_src_audio = _process_src_audio
+        _, processed_src_audio, error = host._prepare_reference_and_source_audio(
+            reference_audio=None,
+            src_audio="song.wav",
+            audio_code_string="<|audio_code_55|>",
+            actual_batch_size=1,
+            task_type="extend",
+        )
+        self.assertIsNone(error)
+        self.assertTrue(called["process_src_audio"])
+        self.assertIsNotNone(processed_src_audio)
+
     def test_should_return_intermediate_always_true(self):
         """Intermediate tensors must always be returned for LRC generation support."""
         host = _Host()
