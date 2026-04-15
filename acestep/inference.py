@@ -380,6 +380,7 @@ def generate_music(
         key_scale = params.keyscale
         time_signature = params.timesignature
         audio_duration = params.duration
+        lm_target_duration = audio_duration
         dit_input_caption = params.caption
         dit_input_vocal_language = params.vocal_language
         dit_input_lyrics = params.lyrics
@@ -484,9 +485,9 @@ def generate_music(
                 if time_sig_clean.lower() not in ["n/a", ""]:
                     user_metadata['timesignature'] = time_sig_clean
 
-            if audio_duration is not None:
+            if lm_target_duration is not None:
                 try:
-                    duration_value = float(audio_duration)
+                    duration_value = float(lm_target_duration)
                     if duration_value > 0:
                         user_metadata['duration'] = int(duration_value)
                 except (ValueError, TypeError):
@@ -497,7 +498,7 @@ def generate_music(
             # Determine infer_type based on whether we need audio codes
             # - "llm_dit": generates both metas and audio codes (two-phase internally)
             # - "dit": generates only metas (single phase)
-            infer_type = "llm_dit" if need_audio_codes and params.thinking else "dit"
+            infer_type = "llm_dit" if need_audio_codes and (params.thinking or force_lm_codes) else "dit"
 
             # Use chunk size from config, or default to batch_size if not set
             max_inference_batch_size = int(config.lm_batch_chunk_size) if config.lm_batch_chunk_size > 0 else actual_batch_size
@@ -527,7 +528,7 @@ def generate_music(
                     negative_prompt=params.lm_negative_prompt,
                     top_k=top_k_value,
                     top_p=top_p_value,
-                    target_duration=audio_duration,  # Pass duration to limit audio codes generation
+                    target_duration=lm_target_duration,  # Keep extend LM codes aligned to crop+extend duration.
                     user_metadata=user_metadata_to_pass,
                     use_cot_caption=params.use_cot_caption,
                     use_cot_language=params.use_cot_language,
@@ -715,7 +716,7 @@ def generate_music(
             "batch_size": config.batch_size if config.batch_size is not None else 1,
             # text2music (Custom mode) never uses src_audio; force None to
             # prevent stale UI values from leaking into generation.
-            "src_audio": None if params.task_type == "text2music" else params.src_audio,
+            "src_audio": None if params.task_type == "text2music" else generate_src_audio,
             "audio_code_string": audio_code_string_to_use,
             "repainting_start": generate_repainting_start,
             "repainting_end": generate_repainting_end,
