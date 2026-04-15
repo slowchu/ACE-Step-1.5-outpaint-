@@ -100,6 +100,15 @@ def build_dit_controls(ui_config: dict[str, Any]) -> dict[str, Any]:
                 info=t("generation.custom_timesteps_info"),
                 elem_classes=["has-info-container"],
             )
+            extend_overlap_seconds = gr.Slider(
+                minimum=1.0,
+                maximum=30.0,
+                value=6.0,
+                step=0.1,
+                label="Extend Context Overlap (sec)",
+                info="For Extend mode: tail context seconds fed to DiT before generated region.",
+                elem_classes=["has-info-container"],
+            )
         with gr.Row():
             cfg_interval_start = gr.Slider(
                 minimum=0.0,
@@ -157,6 +166,7 @@ def build_dit_controls(ui_config: dict[str, Any]) -> dict[str, Any]:
         "use_adg": use_adg,
         "shift": shift,
         "custom_timesteps": custom_timesteps,
+        "extend_overlap_seconds": extend_overlap_seconds,
         "cfg_interval_start": cfg_interval_start,
         "cfg_interval_end": cfg_interval_end,
         "seed": seed,
