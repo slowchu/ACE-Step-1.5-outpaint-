@@ -142,21 +142,6 @@ class ConditioningMaskMixin:
         if chunk_mask_modes:
             for i, mode in enumerate(chunk_mask_modes):
                 if mode == "auto":
-                    if i in extend_ranges:
-                        # Root cause of extend gibberish: the auto-mode 2.0
-                        # overwrite erases the explicit kept=False /
-                        # extension=True split that prepare_condition needs to
-                        # know which frames are real source-audio context and
-                        # which are the noise-seeded generation target.  Extend
-                        # items must keep the per-frame split that was built
-                        # above — skip the overwrite for them.
-                        logger.info(
-                            "[conditioning_masks] chunk_masks[{}] (extend) "
-                            "keeping explicit kept/gen split; skipping "
-                            "auto-mode 2.0 overwrite",
-                            i,
-                        )
-                        continue
                     chunk_masks_tensor[i] = 2.0
 
         # Diagnostic: dump chunk_masks per extend item AFTER auto-mode overwrite.
@@ -184,21 +169,15 @@ class ConditioningMaskMixin:
                     instruction_i = instructions[i] if instructions and i < len(instructions) else ""
                     is_lego = _LEGO_INSTRUCTION_MARKER in instruction_i.lower()
                     if i in extend_ranges:
-                        # Seed the extension region with random noise — never
-                        # VAE-encoded silence — so the model's context
-                        # conditioning is not biased toward fade-out silence
-                        # even though step-injection uses mask=True (no inject)
-                        # for this region.
-                        seg = torch.randn(
-                            end_latent - start_latent,
-                            src_latent.shape[-1],
-                            device=src_latent.device,
-                            dtype=src_latent.dtype,
-                        )
-                        src_latent[start_latent:end_latent] = seg
+                        # src_latents feed context_latents (cross-attention
+                        # conditioning), not diffusion initialization.
+                        # Diffusion still starts from fresh Gaussian xt, while
+                        # silence context in generation spans matches repaint's
+                        # in-distribution "empty region to generate" signal.
+                        src_latent[start_latent:end_latent] = silence_latent_tiled[start_latent:end_latent]
                         logger.info(
                             "[conditioning_masks] extend src_latent item {}: "
-                            "kept=[0:{}] noise-filled=[{}:{}] total={}",
+                            "kept=[0:{}] silence-filled=[{}:{}] total={}",
                             i, start_latent, start_latent, end_latent,
                             src_latent.shape[0],
                         )

@@ -90,6 +90,7 @@ def generate_next_batch_background(
             sampler_mode=params.get("sampler_mode", "euler"),
             velocity_norm_threshold=params.get("velocity_norm_threshold", 0.0),
             velocity_ema_factor=params.get("velocity_ema_factor", 0.0),
+            extend_overlap_seconds=params.get("extend_overlap_seconds", 6.0),
             custom_timesteps=params.get("custom_timesteps"),
             audio_format=params.get("audio_format"),
             mp3_bitrate=params.get("mp3_bitrate"),
