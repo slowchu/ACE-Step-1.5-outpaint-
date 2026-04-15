@@ -142,21 +142,6 @@ class ConditioningMaskMixin:
         if chunk_mask_modes:
             for i, mode in enumerate(chunk_mask_modes):
                 if mode == "auto":
-                    if i in extend_ranges:
-                        # Root cause of extend gibberish: the auto-mode 2.0
-                        # overwrite erases the explicit kept=False /
-                        # extension=True split that prepare_condition needs to
-                        # know which frames are real source-audio context and
-                        # which are the noise-seeded generation target.  Extend
-                        # items must keep the per-frame split that was built
-                        # above — skip the overwrite for them.
-                        logger.info(
-                            "[conditioning_masks] chunk_masks[{}] (extend) "
-                            "keeping explicit kept/gen split; skipping "
-                            "auto-mode 2.0 overwrite",
-                            i,
-                        )
-                        continue
                     chunk_masks_tensor[i] = 2.0
 
         # Diagnostic: dump chunk_masks per extend item AFTER auto-mode overwrite.
