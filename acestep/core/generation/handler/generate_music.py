@@ -65,6 +65,40 @@ def _build_extend_chunk_output(
     return torch.cat([prefix_without_overlap, crossfaded, generated_extension], dim=-1)
 
 
+def _build_extend_full_context_output(
+    original_source: torch.Tensor,
+    generated_chunk: torch.Tensor,
+    sample_rate: int,
+    original_crop_time: float,
+    seam_overlap_sec: float,
+) -> torch.Tensor:
+    """Assemble final output when extend conditioning uses full pre-crop context."""
+    crop_samples = max(0, int(float(original_crop_time) * sample_rate))
+    crop_samples = min(crop_samples, original_source.shape[-1], generated_chunk.shape[-1])
+    generated_extension = generated_chunk[..., crop_samples:]
+    original_kept = original_source[..., :crop_samples]
+
+    seam_samples = max(0, int(float(seam_overlap_sec) * sample_rate))
+    seam_samples = min(seam_samples, original_kept.shape[-1], generated_extension.shape[-1])
+    if seam_samples <= 0:
+        return torch.cat([original_kept, generated_extension], dim=-1)
+
+    prefix_without_seam = original_kept[..., :-seam_samples]
+    source_seam = original_kept[..., -seam_samples:]
+    generated_seam = generated_extension[..., :seam_samples]
+    extension_tail = generated_extension[..., seam_samples:]
+
+    fade = torch.linspace(
+        0.0,
+        1.0,
+        seam_samples,
+        device=generated_chunk.device,
+        dtype=generated_chunk.dtype,
+    ).unsqueeze(0)
+    crossfaded = source_seam * (1.0 - fade) + generated_seam * fade
+    return torch.cat([prefix_without_seam, crossfaded, extension_tail], dim=-1)
+
+
 def _resolve_repaint_config(
     mode: str = "balanced",
     strength: float = 0.5,
@@ -371,38 +405,38 @@ class GenerateMusicMixin:
                 )
                 clamped_crop = max(0.0, min(float(crop_time), src_len_sec))
                 ext_d = max(0.1, float(extend_duration))
-                overlap_cap = min(30.0, clamped_crop) if clamped_crop > 0 else 1.0
-                overlap_requested = max(1.0, float(extend_overlap_seconds))
-                overlap_sec = min(overlap_requested, overlap_cap, clamped_crop)
                 if clamped_crop != crop_time:
                     logger.info(
                         "[generate_music] extend: clamping crop_time {:.3f}s to [0, {:.3f}s]",
                         float(crop_time), src_len_sec,
                     )
                 original_src_audio_for_stitch = processed_src_audio
-                overlap_samples = int(overlap_sec * self.sample_rate)
-                if processed_src_audio is not None and overlap_samples > 0:
-                    processed_src_audio = processed_src_audio[..., -overlap_samples:]
+                context_sec = clamped_crop
+                context_samples = int(context_sec * self.sample_rate)
+                if processed_src_audio is not None and context_samples > 0:
+                    crop_sample = context_samples
+                    crop_sample = max(0, min(crop_sample, processed_src_audio.shape[-1]))
+                    processed_src_audio = processed_src_audio[..., :crop_sample]
                 crop_time = clamped_crop
                 extend_duration = ext_d
-                audio_duration = overlap_sec + extend_duration
+                audio_duration = context_sec + extend_duration
                 # repainting span covers the generated tail within chunk coords.
-                repainting_start = overlap_sec
-                repainting_end = overlap_sec + extend_duration
+                repainting_start = context_sec
+                repainting_end = context_sec + extend_duration
                 logger.info(
-                    "[extend-trace] Chunk-based extend: source_len={}s original_crop={}s "
-                    "overlap={}s extend={}s chunk_total={}s",
-                    round(src_len_sec, 4), round(crop_time, 4), round(overlap_sec, 4),
+                    "[extend-trace] Full-context extend: source_len={}s original_crop={}s "
+                    "context={}s extend={}s chunk_total={}s",
+                    round(src_len_sec, 4), round(crop_time, 4), round(context_sec, 4),
                     round(extend_duration, 4), round(audio_duration, 4),
                 )
                 logger.info(
                     "[extend-trace][generate_music] resolved crop_time={:.3f}s extend_duration={:.3f}s "
-                    "overlap={:.3f}s audio_duration={:.3f}s repainting_start={:.3f}s repainting_end={:.3f}s",
-                    crop_time, extend_duration, overlap_sec, audio_duration,
+                    "context={:.3f}s audio_duration={:.3f}s repainting_start={:.3f}s repainting_end={:.3f}s",
+                    crop_time, extend_duration, context_sec, audio_duration,
                     repainting_start, repainting_end,
                 )
             else:
-                overlap_sec = 0.0
+                context_sec = 0.0
                 original_src_audio_for_stitch = None
 
             service_inputs = self._prepare_generate_music_service_inputs(
@@ -504,12 +538,12 @@ class GenerateMusicMixin:
             if task_type == "extend" and original_src_audio_for_stitch is not None:
                 stitched_wavs = []
                 for i in range(pred_wavs.shape[0]):
-                    stitched = _build_extend_chunk_output(
+                    stitched = _build_extend_full_context_output(
                         original_source=original_src_audio_for_stitch,
                         generated_chunk=pred_wavs[i],
                         sample_rate=self.sample_rate,
                         original_crop_time=crop_time,
-                        overlap_sec=overlap_sec,
+                        seam_overlap_sec=extend_seam_overlap_sec,
                     )
                     stitched_wavs.append(stitched)
                 max_samples = max(w.shape[-1] for w in stitched_wavs)

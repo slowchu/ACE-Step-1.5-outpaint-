@@ -204,6 +204,54 @@ class GenerateMusicMixinTests(unittest.TestCase):
         self.assertIn("Error: boom", out["status_message"])
 
 
+class ExtendChunkPreparationTests(unittest.TestCase):
+    """Validate extend-mode source chunk preparation around crop time."""
+
+    def test_extend_uses_full_crop_as_context(self):
+        """Extend should condition on the full selected crop, not a short tail."""
+        class _ExtendHost(_Host):
+            def __init__(self):
+                super().__init__()
+                self.sample_rate = 16
+
+            def _prepare_reference_and_source_audio(self, **kwargs):
+                self.calls["_prepare_reference_and_source_audio"] = kwargs
+                src = torch.arange(1, 17, dtype=torch.float32).unsqueeze(0)
+                return [[torch.zeros(2, 10)]], src, None
+
+            def _prepare_generate_music_service_inputs(self, **kwargs):
+                self.calls["_prepare_generate_music_service_inputs"] = kwargs
+                return {
+                    "should_return_intermediate": True,
+                    "target_wavs_tensor": torch.zeros(1, 1, 1),
+                    "repainting_start_batch": [0.0],
+                    "repainting_end_batch": [0.0],
+                }
+
+            def _decode_generate_music_pred_latents(self, **kwargs):
+                self.calls["_decode_generate_music_pred_latents"] = kwargs
+                return torch.ones(1, 1, 8), torch.ones(1, 4, 3), {"total_time_cost": 2.0}
+
+        host = _ExtendHost()
+        out = host.generate_music(
+            captions="cap",
+            lyrics="lyr",
+            task_type="extend",
+            use_random_seed=False,
+            seed=77,
+            crop_time=0.25,  # 4 samples at sample_rate=16
+            extend_overlap_seconds=0.125,  # ignored for full-context extend
+            extend_duration=0.25,
+        )
+
+        self.assertEqual(out, host._final_payload)
+        service_input_call = host.calls["_prepare_generate_music_service_inputs"]
+        processed_src = service_input_call["processed_src_audio"]
+        self.assertEqual(processed_src.shape, (1, 4))
+        self.assertTrue(torch.equal(processed_src, torch.tensor([[1.0, 2.0, 3.0, 4.0]])))
+        self.assertEqual(service_input_call["audio_duration"], 0.5)
+
+
 class VramPreflightCheckTests(unittest.TestCase):
     """Verify ``_vram_preflight_check`` respects CPU offload mode."""
 
